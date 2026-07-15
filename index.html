@@ -241,7 +241,9 @@ function deductMM(series){ return num(IL.cutDeductMM[series]||0); }
 
 /* ============================ PRICING ENGINE ============================ */
 const SERIES_ALIAS={URBAN_PLUS:'URBAN'};        // shares URBAN profiles
-const STOCK_FT=[12,14,16,18,19,20,21,22,24];    // candidate aluminium bar lengths
+const STOCK_FT=[12,14,16,18];                   // non-thermal candidate stock lengths (max 18ft)
+const THERMAL_SERIES=new Set(['URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM']);
+function stockOptions(series){ return THERMAL_SERIES.has(series)?[18]:STOCK_FT; }
 function rateSeries(s){ return SERIES_ALIAS[s]||s; }
 function accRate(name){ const a=DB.rates.accessories[name]; return a?num(a.rate):0; }
 function sysParts(series){ return DB.rates.systems[rateSeries(series)]||[]; }
@@ -348,14 +350,15 @@ function packBars(lengths,barMm){
   for(const p of arr){ let placed=false; for(let i=0;i<rem.length;i++){ if(rem[i]>=p-1e-6){rem[i]-=p;placed=true;break;} } if(!placed) rem.push(barMm-p); }
   return rem.length;
 }
-function bestBar(pieces){
+function bestBar(pieces,series){
+  const stock=stockOptions(series);
   const lengths=[]; pieces.forEach(p=>{ for(let i=0;i<p.cnt;i++) lengths.push(p.len); });
   const total=lengths.reduce((a,b)=>a+b,0); if(!total) return {ft:0,barMm:0,bars:0,waste:0,total:0};
   const maxPiece=Math.max(...lengths); let best=null;
-  STOCK_FT.forEach(ft=>{ const barMm=ft*FT_MM; if(maxPiece>barMm) return;
+  stock.forEach(ft=>{ const barMm=ft*FT_MM; if(maxPiece>barMm) return;
     const bars=packBars(lengths,barMm), waste=(bars*barMm-total)/(bars*barMm);
     if(!best||waste<best.waste-1e-9||(Math.abs(waste-best.waste)<1e-9&&bars<best.bars)) best={ft,barMm,bars,waste}; });
-  if(!best){ const ft=STOCK_FT[STOCK_FT.length-1],barMm=ft*FT_MM,bars=Math.ceil(total/barMm); best={ft,barMm,bars,waste:(bars*barMm-total)/(bars*barMm)}; }
+  if(!best){ const ft=stock[stock.length-1],barMm=ft*FT_MM,bars=Math.ceil(total/barMm); best={ft,barMm,bars,waste:(bars*barMm-total)/(bars*barMm)}; }
   return {...best,total};
 }
 function prodGroups(w){
@@ -387,7 +390,7 @@ function prodGroups(w){
 }
 function calcProduction(w){
   const groups=prodGroups(w); let totalBars=0,usedMm=0,wasteMm=0;
-  const rows=groups.map(gr=>{ const bb=bestBar(gr.pieces); const wm=Math.round(bb.bars*bb.barMm-bb.total);
+  const rows=groups.map(gr=>{ const bb=bestBar(gr.pieces,w.series); const wm=Math.round(bb.bars*bb.barMm-bb.total);
     totalBars+=bb.bars; usedMm+=bb.total; wasteMm+=wm;
     return {name:gr.name,part:gr.part,pieces:gr.pieces,totalMm:Math.round(bb.total),barFt:bb.ft,bars:bb.bars,wastagePct:bb.waste*100,wasteMm:wm}; });
   return {rows,totalBars,usedMm:Math.round(usedMm),totalWastageMm:wasteMm,wastagePct:(usedMm+wasteMm)>0?wasteMm/(usedMm+wasteMm)*100:0};
@@ -416,7 +419,7 @@ function calcBOM(q){
     if(!alu[key]) alu[key]={series:w.series,section:gr.name,profile:gr.part,pieces:[]};
     gr.pieces.forEach(p=>alu[key].pieces.push({len:p.len,cnt:p.cnt}));
   }); });
-  const aluRows=Object.values(alu).map(g=>{ const bb=bestBar(g.pieces);
+  const aluRows=Object.values(alu).map(g=>{ const bb=bestBar(g.pieces,g.series);
     return {series:g.series,section:g.section,profile:g.profile,bars:bb.bars,barFt:bb.ft,wastagePct:bb.waste*100,usedMm:Math.round(bb.total)}; })
     .sort((a,b)=>(a.series+a.section).localeCompare(b.series+b.section));
   const hw={};
