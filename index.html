@@ -975,17 +975,26 @@ function doLogin(){
     // auto-approve first-ever device by an admin; otherwise block
     if(user.role==='admin' && !(DB.devices||[]).length){ DB.devices.push({id:deviceId(),label:'Admin device',user:'',approvedAt:new Date().toISOString()}); save(); }
     else if(!deviceApproved(user)){ err.innerHTML='This device is not approved. Ask an admin to approve Device ID <b>'+deviceId()+'</b>.';
-      DB._pending=DB._pending||[]; if(!DB._pending.includes(deviceId()))DB._pending.push(deviceId()); save(); return; }
+      DB._pending=DB._pending||[];
+      const already=DB._pending.find(p=>(p.id||p)===deviceId());
+      if(!already){ DB._pending.push({id:deviceId(),username:u,at:new Date().toISOString()}); }
+      else if(already.username!==u){ already.username=u; already.at=new Date().toISOString(); }
+      save(); cloudSavePending(); return; }
   }
   ME=user; localStorage.setItem('psg_session',JSON.stringify({u:user.username,at:Date.now()}));
   document.getElementById('loginBg').classList.remove('show'); document.body.classList.remove('locked');
   buildNav(); go('dashboard');
+  if(ME.role==='admin') startPendingPoll();
 }
 function logout(){ ME=null; localStorage.removeItem('psg_session'); renderLogin(); }
 function buildNav(){
   const items=[['dashboard','▚','Dashboard'],['quotes','▤','Quotations'],['catalogue','▦','Catalogue'],['rates','₨','Rates'],['admin','⚙','Admin Console']];
   const nav=document.getElementById('navItems');
-  nav.innerHTML=items.filter(([v])=>v==='dashboard'||can(v)).map(([v,ic,label])=>`<div class="nav" data-view="${v}"><span class="ic">${ic}</span> ${label}</div>`).join('');
+  const pendingCount=(DB._pending||[]).length;
+  nav.innerHTML=items.filter(([v])=>v==='dashboard'||can(v)).map(([v,ic,label])=>{
+    const badge=(v==='admin'&&ME.role==='admin'&&pendingCount)?` <span style="background:var(--danger);color:#fff;border-radius:99px;padding:1px 7px;font-size:11px;font-weight:700">${pendingCount}</span>`:'';
+    return `<div class="nav" data-view="${v}"><span class="ic">${ic}</span> ${label}${badge}</div>`;
+  }).join('');
   nav.querySelectorAll('.nav[data-view]').forEach(n=>n.addEventListener('click',()=>go(n.dataset.view)));
   document.getElementById('meBox').innerHTML=`<div class="muted" style="font-size:11px;padding:0 8px">Signed in as</div>
     <div style="padding:2px 8px 8px;display:flex;align-items:center;justify-content:space-between"><b>${esc(ME.username)}</b> <span class="badge">${ME.role}</span></div>`;
@@ -1014,7 +1023,18 @@ function renderAdmin(){
    <div class="bd">
      <p class="muted" style="margin-top:0">Browsers can't read a hardware MAC address, so each machine is identified by a <b>Device ID</b> the app assigns. With restriction <b>On</b>, only approved Device IDs can sign in. This device: <b>${deviceId()}</b>
        ${(DB.devices||[]).some(d=>d.id===deviceId())?'<span class="chip g">approved</span>':`<button class="sm" onclick="approveDevice('${deviceId()}','This device')">Approve this device</button>`}</p>
-     ${(DB._pending&&DB._pending.length)?`<div style="margin-bottom:12px"><b>Pending approval:</b> ${DB._pending.map(p=>`<span class="chip">${p} <a href="#" onclick="approveDevice('${p}','');return false">approve</a></span>`).join(' ')}</div>`:''}
+     ${(DB._pending&&DB._pending.length)?`<div style="background:var(--warn,#fff8e1);border:1.5px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:16px">
+       <div style="font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span style="font-size:18px">🔔</span> ${DB._pending.length} device${DB._pending.length>1?'s':''} requesting access</div>
+       ${DB._pending.map((p,pi)=>{const id=p.id||p; const who=p.username||'unknown'; const when=p.at?new Date(p.at).toLocaleString():'';
+         return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #f59e0b66;flex-wrap:wrap">
+           <div style="flex:1;min-width:180px"><span style="font-family:monospace;font-weight:700">${esc(id)}</span><br>
+           <span class="muted" style="font-size:12px">User tried: <b>${esc(who)}</b>${when?' · '+when:''}</span></div>
+           <input id="plabel_${pi}" placeholder="Label (optional)" style="max-width:150px;font-size:13px">
+           <button class="sm" style="background:var(--green,#16a34a);color:#fff;border:none" onclick="approvePending(${pi})">✓ Approve</button>
+           <button class="ghost sm danger" onclick="denyPending(${pi})">✕ Deny</button>
+         </div>`;}).join('')}
+     </div>`:''}
+
      <table><thead><tr><th>Device ID</th><th>Label</th><th>Restricted to user</th><th></th></tr></thead><tbody>
        ${(DB.devices||[]).map((d,i)=>`<tr><td><b>${esc(d.id)}</b></td>
          <td><input style="max-width:160px" value="${esc(d.label||'')}" onchange="setDevice(${i},'label',this.value)"></td>
@@ -1033,7 +1053,38 @@ function setUser(i,k,v){ DB.users[i][k]=v; if(k==='role'&&v==='admin')DB.users[i
 function toggleView(i,v,on){ const u=DB.users[i]; u.views=u.views||[]; if(on){if(!u.views.includes(v))u.views.push(v);}else u.views=u.views.filter(x=>x!==v); save(); cloudSaveUsers(); }
 function delUser(i){ if(DB.users[i].username===ME.username){toast("You can't delete yourself");return;} if(!confirm('Delete user?'))return; DB.users.splice(i,1); save(); cloudSaveUsers(); renderAdmin(); }
 function setDeviceMode(m){ DB.security.deviceMode=m; if(m==='global'&&!(DB.devices||[]).some(d=>d.id===deviceId())){DB.devices.push({id:deviceId(),label:'This device',user:'',approvedAt:new Date().toISOString()});} save(); cloudSaveDevices(); renderAdmin(); }
-function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.devices.push({id,label:label||'',user:'',approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>p!==id); save(); cloudSaveDevices(); renderAdmin(); toast('Device approved'); }
+function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.devices.push({id,label:label||'',user:'',approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>(p.id||p)!==id); save(); cloudSaveDevices(); cloudSavePending(); buildNav(); renderAdmin(); toast('✓ Device approved: '+id); }
+function approvePending(pi){ const p=DB._pending[pi]; const id=p.id||p; const label=(document.getElementById('plabel_'+pi)||{}).value||''; approveDevice(id,label); }
+function denyPending(pi){ const p=DB._pending[pi]; const id=p.id||p; DB._pending.splice(pi,1); save(); cloudSavePending(); renderAdmin(); toast('Device denied: '+id); }
+function cloudSavePending(){ if(!SB)return; SB.from('kv').upsert({key:'_pending',val:JSON.stringify(DB._pending||[])}).then(()=>{}); }
+let _pollTimer=null;
+async function pollPending(){
+  if(!SB||!ME||ME.role!=='admin')return;
+  try{
+    const {data}=await SB.from('kv').select('val').eq('key','_pending').single();
+    if(data&&data.val){
+      const remote=JSON.parse(data.val)||[];
+      const before=(DB._pending||[]).length;
+      // merge: add any remote pending not already in local
+      remote.forEach(p=>{
+        const id=p.id||p;
+        if(!(DB._pending||[]).find(x=>(x.id||x)===id)){
+          DB._pending=DB._pending||[];
+          DB._pending.push(p);
+        }
+      });
+      const after=(DB._pending||[]).length;
+      if(after>before){
+        save(); buildNav();
+        const newCount=after-before;
+        toast('🔔 '+newCount+' new device'+(newCount>1?'s':'')+' requesting access — check Admin Console');
+        if(document.querySelector('.nav.active[data-view="admin"]')) renderAdmin();
+      }
+    }
+  }catch(e){}
+}
+function startPendingPoll(){ if(_pollTimer)clearInterval(_pollTimer); _pollTimer=setInterval(pollPending,30000); pollPending(); }
+
 function addDeviceManual(){ const id=(document.getElementById('new_dev_id').value||'').trim().toUpperCase(); const label=(document.getElementById('new_dev_label').value||'').trim(); const user=(document.getElementById('new_dev_user').value||'').trim(); if(!id){toast('Enter a Device ID');return;} if((DB.devices||[]).some(d=>d.id===id)){toast('Device already exists');return;} DB.devices=DB.devices||[]; DB.devices.push({id,label,user,approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>p!==id); save(); cloudSaveDevices(); renderAdmin(); toast('Device added: '+id); }
 function setDevice(i,k,v){ DB.devices[i][k]=v; save(); cloudSaveDevices(); }
 function delDevice(i){ DB.devices.splice(i,1); save(); cloudSaveDevices(); renderAdmin(); }
