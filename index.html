@@ -1020,6 +1020,12 @@ function renderAdmin(){
          <td><input style="max-width:160px" value="${esc(d.label||'')}" onchange="setDevice(${i},'label',this.value)"></td>
          <td><select style="max-width:140px" onchange="setDevice(${i},'user',this.value)"><option value="">Any user</option>${DB.users.map(u=>`<option ${d.user===u.username?'selected':''}>${esc(u.username)}</option>`).join('')}</select></td>
          <td class="right"><button class="ghost sm danger" onclick="delDevice(${i})">Revoke</button></td></tr>`).join('')||'<tr><td colspan=4 class="muted" style="padding:16px">No approved devices yet.</td></tr>'}
+       <tr style="border-top:2px solid var(--brd);background:var(--bg2)">
+         <td><input id="new_dev_id" placeholder="DEV-XXXXXXXX-XXXX" style="font-family:monospace;max-width:200px"></td>
+         <td><input id="new_dev_label" placeholder="e.g. Munis Phone" style="max-width:160px"></td>
+         <td><select id="new_dev_user" style="max-width:140px"><option value="">Any user</option>${DB.users.map(u=>`<option>${esc(u.username)}</option>`).join('')}</select></td>
+         <td class="right"><button class="sm" onclick="addDeviceManual()">+ Add</button></td>
+       </tr>
      </tbody></table></div></div>`;
 }
 function addUser(){ DB.users.push({username:'newuser',password:'changeme',role:'user',views:['dashboard'],devices:[]}); save(); cloudSaveUsers(); renderAdmin(); }
@@ -1028,6 +1034,7 @@ function toggleView(i,v,on){ const u=DB.users[i]; u.views=u.views||[]; if(on){if
 function delUser(i){ if(DB.users[i].username===ME.username){toast("You can't delete yourself");return;} if(!confirm('Delete user?'))return; DB.users.splice(i,1); save(); cloudSaveUsers(); renderAdmin(); }
 function setDeviceMode(m){ DB.security.deviceMode=m; if(m==='global'&&!(DB.devices||[]).some(d=>d.id===deviceId())){DB.devices.push({id:deviceId(),label:'This device',user:'',approvedAt:new Date().toISOString()});} save(); cloudSaveDevices(); renderAdmin(); }
 function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.devices.push({id,label:label||'',user:'',approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>p!==id); save(); cloudSaveDevices(); renderAdmin(); toast('Device approved'); }
+function addDeviceManual(){ const id=(document.getElementById('new_dev_id').value||'').trim().toUpperCase(); const label=(document.getElementById('new_dev_label').value||'').trim(); const user=(document.getElementById('new_dev_user').value||'').trim(); if(!id){toast('Enter a Device ID');return;} if((DB.devices||[]).some(d=>d.id===id)){toast('Device already exists');return;} DB.devices=DB.devices||[]; DB.devices.push({id,label,user,approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>p!==id); save(); cloudSaveDevices(); renderAdmin(); toast('Device added: '+id); }
 function setDevice(i,k,v){ DB.devices[i][k]=v; save(); cloudSaveDevices(); }
 function delDevice(i){ DB.devices.splice(i,1); save(); cloudSaveDevices(); renderAdmin(); }
 
