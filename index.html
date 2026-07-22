@@ -498,7 +498,7 @@ function calcBOM(q){
     return {series:g.series,profile:g.profile,bars:bb.bars,barFt:bb.ft,wastagePct:bb.waste*100,usedMm:Math.round(bb.total)}; })
     .sort((a,b)=>(a.series+a.profile).localeCompare(b.series+b.profile));
   const hw={};
-  (q.windows||[]).forEach(w=>bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hw[k]=(hw[k]||0)+b.qty; }));
+  (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hw[k]=(hw[k]||0)+b.qty*wq; }); });
   const hwRows=Object.entries(hw).map(([k,v])=>{ const [item,unit]=k.split('|'); return {item,unit,qty:Math.round(v*100)/100}; });
   const glMap={};
   (q.windows||[]).forEach(w=>{ const g=glassOf(w);
@@ -799,7 +799,7 @@ function renderProduction(){
   if(!ws.length){ document.getElementById('subview').innerHTML='<div class="empty">No windows.</div>'; return; }
   const profiles=calcWOProfiles(q);
   const bom=calcBOM(q);
-  const hwAgg={}; ws.forEach(w=>{ bomOf(w).forEach(b=>{ const k=b.item+'||'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty; }); });
+  const hwAgg={}; ws.forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'||'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty*wq; }); });
 
   let html=`<div class="card" style="margin-bottom:14px">
     <div class="hd"><b>Aluminium Cut List</b><span class="muted" style="font-size:12px">Grouped by profile · all windows</span><span class="chip">${bom.totalBars} bars total</span></div>
@@ -1018,7 +1018,7 @@ function doPrint(id,mode){
        }).join('')}</tbody></table></div>`;
   } else { // prod — grouped-by-profile work order
     const profiles=calcWOProfiles(q), allBom=calcBOM(q);
-    const hwAgg={}; (q.windows||[]).forEach(w=>bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty; }));
+    const hwAgg={}; (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty*wq; }); });
     const totalBars=allBom.totalBars;
 
     // Window index table
