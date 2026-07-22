@@ -176,6 +176,77 @@ const FT_MM=304.8;
 const toMm=ft=>Math.round(num(ft)*304.8);
 function dimStr(w){const d=dimsOf(w);return `${toMm(d.OH)}×${toMm(d.OW)}mm`;}
 
+const HANDLE_ACC_DEFAULT={
+  "HTB-15":[
+    {name:"Rubber Fix ZPG-65 Thin Flat",rate:65,qty:1,unit:"rft"},
+    {name:"Rubber Composite ZPG-65 Sash",rate:137.65,qty:1,unit:"rft"},
+    {name:"European Grove Seal Strip TPE",rate:92.65,qty:1,unit:"rft"},
+    {name:"Transmision 30mm 180",rate:2353,qty:1,unit:"pc"},
+    {name:"Transmission Nylon Strip",rate:115,qty:1,unit:"pc"},
+    {name:"DO Transmision Bar with Points",rate:753,qty:1,unit:"pc"},
+    {name:"DO Net Stricker",rate:253,qty:1,unit:"pc"},
+    {name:"SS 11mm Lock Seat",rate:53,qty:1,unit:"pc"},
+    {name:"Sash Lifter",rate:653,qty:1,unit:"pc"},
+    {name:"Support Arm HOPO",rate:1953,qty:1,unit:"pc"}
+  ],
+  "HTB-14":[
+    {name:"Transmision 30mm 180",rate:500,qty:1,unit:"pc"},
+    {name:"Transmission Nylon Strip",rate:200,qty:1,unit:"pc"},
+    {name:"Handle Kevita Black A",rate:350,qty:1,unit:"pc"},
+    {name:"DO Transmision Bar with Points",rate:180,qty:1,unit:"pc"},
+    {name:"DO Net Stricker",rate:280,qty:1,unit:"pc"},
+    {name:"SS 11mm Lock Seat",rate:150,qty:1,unit:"pc"},
+    {name:"Sash Lifter",rate:900,qty:1,unit:"pc"}
+  ],
+  "AP50":[
+    {name:"Rubber Fix AP-50 Thick",rate:65,qty:1,unit:"rft"},
+    {name:"Rubber Composite AP-50 Sash",rate:137.65,qty:1,unit:"rft"},
+    {name:"Hinges White AP50",rate:572,qty:1,unit:"pc"},
+    {name:"Friction Hinge 16",rate:672,qty:1,unit:"pc"},
+    {name:"Friction Hinge 8",rate:0,qty:1,unit:"pc"},
+    {name:"Handle Outward Multi Point with Bar XF-A007",rate:2672,qty:1,unit:"pc"},
+    {name:"AP50 T-Connector/Safe Lock",rate:1472,qty:1,unit:"pc"},
+    {name:"Transmission Nylon Strip",rate:0,qty:1,unit:"pc"},
+    {name:"SS 11mm Lock Seat",rate:53,qty:1,unit:"pc"},
+    {name:"Handle XF-B028 Black Left",rate:472,qty:1,unit:"pc"},
+    {name:"AP50 Drive & Stop Limit",rate:1172,qty:1,unit:"pc"},
+    {name:"AP50 Door Lock Body",rate:1472,qty:1,unit:"pc"},
+    {name:"AP50 Door Lock Cylinder Outward 50+30T",rate:2072,qty:1,unit:"pc"},
+    {name:"Door Lock Stricker Euro",rate:453,qty:1,unit:"pc"}
+  ],
+  "LCZS-631":[
+    {name:"Main transmission rod N55",rate:475,qty:1,unit:"pc"},
+    {name:"Locking plate ZA1-6A",rate:210,qty:1,unit:"pc"},
+    {name:"Active lock point HDS4",rate:6,qty:1,unit:"pc"},
+    {name:"Waterproof cap FSG-01",rate:7,qty:1,unit:"pc"},
+    {name:"Cushion block N33A",rate:8,qty:1,unit:"pc"}
+  ],
+  "LCZS39":[
+    {name:"Loose preventer FSP10",rate:9,qty:1,unit:"pc"},
+    {name:"Main transmission rod N55",rate:475,qty:1,unit:"pc"},
+    {name:"Side transmission rod N39",rate:335,qty:1,unit:"pc"},
+    {name:"Locking plate ZA1-6A",rate:210,qty:1,unit:"pc"},
+    {name:"Cushion block N33A",rate:8,qty:1,unit:"pc"}
+  ],
+  "CZS320":[
+    {name:"Linking rod ZCD-08",rate:11,qty:1,unit:"pc"},
+    {name:"Locking plate ZA1-6A",rate:210,qty:1,unit:"pc"},
+    {name:"Middle locking plate LSK76",rate:12,qty:1,unit:"pc"},
+    {name:"Main transmission rod N55",rate:475,qty:1,unit:"pc"},
+    {name:"Side transmission rod N39",rate:335,qty:1,unit:"pc"},
+    {name:"Cushion block N33A",rate:8,qty:1,unit:"pc"}
+  ],
+  "LCZS91":[
+    {name:"Loose preventer FSP10",rate:9,qty:1,unit:"pc"},
+    {name:"Linking rod ZCD-08",rate:11,qty:1,unit:"pc"},
+    {name:"Locking plate ZA1-6A",rate:210,qty:1,unit:"pc"},
+    {name:"Middle locking plate LSK76",rate:12,qty:1,unit:"pc"},
+    {name:"Main transmission rod N55",rate:475,qty:1,unit:"pc"},
+    {name:"Side transmission rod N39",rate:335,qty:1,unit:"pc"},
+    {name:"Cushion block N33A",rate:8,qty:1,unit:"pc"}
+  ]
+};
+
 let DB=load();
 function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}catch(e){}
   if(!s||!s.rates) s={rates:structuredClone(SEED), quotes:[], seq:1};
@@ -184,6 +255,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(!s.security) s.security=structuredClone(SEED.security||{deviceMode:'off'});
   if(!s.rates.glass) s.rates.glass=structuredClone(SEED.glass||[]);
   if(!s.rates.spacers) s.rates.spacers=structuredClone(SEED.spacers||[]);
+  if(!s.rates.handleAccessories) s.rates.handleAccessories=structuredClone(HANDLE_ACC_DEFAULT);
   return s; }
 function save(){ localStorage.setItem(LS_KEY,JSON.stringify(DB)); }
 
@@ -310,7 +382,9 @@ function calcWindow(w){
   if(wtype!=='fixed'){
     const hr=w.handle?num(DB.rates.handles[w.handle]||0):0;
     const hq=(w.handleQty===0||w.handleQty==='0')?0:(num(w.handleQty)||1);
-    if(w.handle) addHw('Handle + Accessories',hq,hr,'pc',w.handle);
+    if(w.handle){ addHw(w.handle+' Handle',hq,hr,'pc',w.handle);
+      const accs=(DB.rates.handleAccessories||{})[w.handle]||[];
+      accs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*hq, a.rate||0, a.unit||'pc'); }); }
     let rubberLen = isUrban(series)?shutLen : (series==='ECONOMY'?(bidLen+shutLen)*2:(bidLen*2)+shutLen);
     addHw('Glass Rubber',rubberLen,accRate('Glass Rubber'),'rft');
     addHw('Angle',3,accRate('Angle'),'rft');
@@ -808,6 +882,14 @@ function renderRates(){
        ${Object.entries(DB.rates.handles).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="right"><input style="max-width:110px;text-align:right" type="number" value="${v}" onchange="DB.rates.handles['${jsq(k)}']=num(this.value);save();toast('Saved')"></td></tr>`).join('')}</tbody></table></div></div>
      <div class="card"><div class="hd"><b>Hinges</b></div><div class="bd" style="padding:0"><table><tbody>
        ${Object.entries(DB.rates.hinges).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="right"><input style="max-width:110px;text-align:right" type="number" value="${v}" onchange="DB.rates.hinges['${jsq(k)}']=num(this.value);save();toast('Saved')"></td></tr>`).join('')}</tbody></table></div></div></div>
+   <div class="card" style="margin-top:16px">
+     <div class="hd"><b>Handle Accessories</b>
+       <select id="haHandleSel" onchange="renderHandleAccTable()">${Object.keys(DB.rates.handles).map(k=>`<option>${k}</option>`).join('')}</select>
+       <button class="sm" onclick="addHandleAcc()">+ Add Row</button>
+       <button class="sm ghost" onclick="addHandleAccGroup()">+ New Handle</button>
+     </div>
+     <div id="haTable" style="padding:0;overflow:auto"></div>
+   </div>
    <div class="f2" style="margin-top:16px">
      <div class="card"><div class="hd"><b>Glass Types <span class="muted" style="font-weight:400">(Rs / Sft)</span></b><button class="sm" onclick="addGlass()">+ Add</button></div>
        <div class="bd muted" style="font-size:11.5px;padding:8px 16px">Leave thickness blank to apply one rate to all thicknesses, or add a row per thickness (e.g. Clear 6mm, Clear 12mm) for thickness-based pricing.</div>
@@ -827,6 +909,7 @@ function renderRates(){
      <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
      <div id="sysTable" style="overflow:auto"></div></div></div>`;
   renderSysTable();
+  renderHandleAccTable();
 }
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
@@ -841,6 +924,34 @@ function addSpacer(){ DB.rates.spacers.push({size:'New',rate:0}); save(); render
 function addAccessory(){ const n='New Accessory '+Date.now().toString().slice(-4); DB.rates.accessories[n]={category:'Hardware',unit:'pc',rate:0}; save(); renderRates(); }
 function delAcc(k){ if(!confirm('Remove "'+k+'" from accessories?'))return; delete DB.rates.accessories[k]; save(); renderRates(); }
 function renameAcc(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.accessories[oldKey]; delete DB.rates.accessories[oldKey]; DB.rates.accessories[newKey]=v; save(); }
+function renderHandleAccTable(){
+  const h=document.getElementById('haHandleSel'); if(!h) return;
+  const handle=h.value; if(!handle) return;
+  if(!DB.rates.handleAccessories) DB.rates.handleAccessories={};
+  const rows=DB.rates.handleAccessories[handle]||[];
+  document.getElementById('haTable').innerHTML=`<table><thead><tr><th>Accessory Name</th><th style="text-align:center">Qty</th><th>Unit</th><th style="text-align:right">Rate (Rs)</th><th></th></tr></thead><tbody>
+  ${rows.map((a,i)=>`<tr>
+    <td><input style="min-width:220px" value="${esc(a.name||'')}" onchange="haSet('${jsq(handle)}',${i},'name',this.value)"></td>
+    <td><input type="number" style="max-width:60px;text-align:center" value="${a.qty??1}" onchange="haSet('${jsq(handle)}',${i},'qty',+this.value)"></td>
+    <td><select onchange="haSet('${jsq(handle)}',${i},'unit',this.value)">${['pc','rft','Sft','kg'].map(u=>`<option ${(a.unit||'pc')===u?'selected':''}>${u}</option>`).join('')}</select></td>
+    <td><input type="number" style="max-width:100px;text-align:right" value="${a.rate??0}" onchange="haSet('${jsq(handle)}',${i},'rate',+this.value)"></td>
+    <td><button class="ghost sm danger" onclick="haDel('${jsq(handle)}',${i})">✕</button></td>
+  </tr>`).join('')}
+  </tbody></table>`;
+}
+function haSet(handle,i,field,val){ if(!DB.rates.handleAccessories[handle]) return; DB.rates.handleAccessories[handle][i][field]=val; save(); toast('Saved'); }
+function haDel(handle,i){ if(!DB.rates.handleAccessories[handle]) return; DB.rates.handleAccessories[handle].splice(i,1); save(); renderHandleAccTable(); }
+function addHandleAcc(){ const h=document.getElementById('haHandleSel'); if(!h)return; const handle=h.value;
+  if(!DB.rates.handleAccessories) DB.rates.handleAccessories={};
+  if(!DB.rates.handleAccessories[handle]) DB.rates.handleAccessories[handle]=[];
+  DB.rates.handleAccessories[handle].push({name:'',rate:0,qty:1,unit:'pc'}); save(); renderHandleAccTable(); }
+function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):'); if(!code||!code.trim())return;
+  const k=code.trim();
+  if(!DB.rates.handleAccessories) DB.rates.handleAccessories={};
+  if(!DB.rates.handleAccessories[k]) DB.rates.handleAccessories[k]=[];
+  DB.rates.handles[k]=DB.rates.handles[k]||0;
+  save(); renderRates();
+  setTimeout(()=>{ const s=document.getElementById('haHandleSel'); if(s){s.value=k;renderHandleAccTable();} },100); }
 
 /* ============================ PRINT ============================ */
 function openPrint(id){
