@@ -111,6 +111,9 @@
     #printRoot .qh{ margin-bottom:8px !important; padding-bottom:8px !important; }
     /* work order: keep each section together but allow natural flow */
     .mode-detail .pw, .mode-prod .pw{ page-break-inside:avoid; break-inside:avoid; margin-bottom:14px; }
+    /* design summary: keep each row of 3 windows together */
+    .mode-ds #printRoot table tr{ page-break-inside:avoid; }
+    .mode-ds #printRoot table td{ vertical-align:top; }
   }
   #printRoot{display:none;background:#fff;color:#111}
   body.printing #printRoot{display:block;position:fixed;inset:0;z-index:9999;overflow:auto;padding:26px}
@@ -954,19 +957,56 @@ function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):
   setTimeout(()=>{ const s=document.getElementById('haHandleSel'); if(s){s.value=k;renderHandleAccTable();} },100); }
 
 /* ============================ PRINT ============================ */
+function winDiagramSVG(w,maxW,maxH){
+  const d=dimsOf(w); const OH=d.OH||1, OW=d.OW||1;
+  const ratio=OH/OW;
+  let svgW=maxW||110, svgH=Math.round(svgW*ratio);
+  if(svgH>maxH){svgH=maxH;svgW=Math.round(svgH/ratio);}
+  const F=6, S=5; // frame, sash inset
+  const wtype=w.wtype||'casement';
+  const iX=F,iY=F,iW=svgW-2*F,iH=svgH-2*F;
+  const sX=F+S,sY=F+S,sW=svgW-2*(F+S),sH=svgH-2*(F+S);
+  const cx=svgW/2,cy=svgH/2;
+  let inner='';
+  if(wtype==='fixed'){
+    // glass pane with two diagonals
+    inner+=`<line x1="${iX}" y1="${iY}" x2="${iX+iW}" y2="${iY+iH}" stroke="#888" stroke-width="0.7"/>
+            <line x1="${iX+iW}" y1="${iY}" x2="${iX}" y2="${iY+iH}" stroke="#888" stroke-width="0.7"/>`;
+  } else if(wtype==='casement'){
+    // sash + one diagonal + open arrow
+    inner+=`<rect x="${sX}" y="${sY}" width="${sW}" height="${sH}" fill="none" stroke="#444" stroke-width="1"/>
+            <line x1="${sX}" y1="${sY}" x2="${sX+sW}" y2="${sY+sH}" stroke="#999" stroke-width="0.6"/>
+            <line x1="${cx-8}" y1="${cy}" x2="${cx+8}" y2="${cy}" stroke="#333" stroke-width="1.2"/>
+            <polygon points="${cx+8},${cy} ${cx+4},${cy-3.5} ${cx+4},${cy+3.5}" fill="#333"/>`;
+  } else {
+    // sliding — two panels side by side
+    const m=svgW/2;
+    inner+=`<line x1="${m}" y1="${F}" x2="${m}" y2="${F+iH}" stroke="#444" stroke-width="1"/>
+            <line x1="${sX}" y1="${sY}" x2="${m-S}" y2="${sY+sH}" stroke="#bbb" stroke-width="0.5"/>
+            <line x1="${m+S}" y1="${sY}" x2="${iX+iW}" y2="${sY+sH}" stroke="#bbb" stroke-width="0.5"/>
+            <line x1="${cx-8}" y1="${cy}" x2="${cx+8}" y2="${cy}" stroke="#333" stroke-width="1.2"/>
+            <polygon points="${cx+8},${cy} ${cx+4},${cy-3.5} ${cx+4},${cy+3.5}" fill="#333"/>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}">
+    <rect width="${svgW}" height="${svgH}" fill="none" stroke="#222" stroke-width="3.5"/>
+    <rect x="${iX}" y="${iY}" width="${iW}" height="${iH}" fill="#deeeff" stroke="#444" stroke-width="1.5"/>
+    ${inner}
+  </svg>`;
+}
 function openPrint(id){
   showModal(`<div class="hd"><h3>Print / PDF</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
    <div class="bd"><p class="muted" style="margin-top:0">Choose what to print. Use your browser's "Save as PDF" in the print dialog.</p>
      <div class="row"><button onclick="doPrint('${id}','quote')">📄 Quotation only</button>
        <button class="ghost" onclick="doPrint('${id}','detail')">📋 Detailed breakup</button>
        <button class="ghost" onclick="doPrint('${id}','prod')">🏭 Production work order</button>
-       <button class="ghost" onclick="doPrint('${id}','bom')">🧾 Bill of Materials</button></div></div>`);
+       <button class="ghost" onclick="doPrint('${id}','bom')">🧾 Bill of Materials</button>
+       <button class="ghost" onclick="doPrint('${id}','ds')">🪟 Design Summary</button></div></div>`);
 }
 function doPrint(id,mode){
   closeModal(); const q=DB.quotes.find(x=>x.id===id), co=DB.rates.company;
   const head=`<div class="qh"><div><div style="font-size:20px;font-weight:800;color:#1f6feb">${esc(co.name)}</div>
      <div style="font-size:11px;color:#333">${esc(co.address)}<br>Phone: ${esc(co.phone)} · Hours: ${esc(co.hours)}</div></div>
-     <div style="text-align:right"><div style="font-size:24px;font-weight:800;letter-spacing:1px">${mode==='prod'?'WORK ORDER':(mode==='detail'?'QUOTATION BREAKUP':(mode==='bom'?'BILL OF MATERIALS':'QUOTATION'))}</div>
+     <div style="text-align:right"><div style="font-size:24px;font-weight:800;letter-spacing:1px">${mode==='prod'?'WORK ORDER':(mode==='detail'?'QUOTATION BREAKUP':(mode==='bom'?'BILL OF MATERIALS':(mode==='ds'?'DESIGN SUMMARY':'QUOTATION')))}</div>
        <div style="font-size:12px">${esc(q.quoteNo||'')}<br>${q.date||''}</div></div></div>
    <table style="width:100%;margin-bottom:12px;font-size:12px"><tr>
      <td style="vertical-align:top"><b>TO</b><br>${esc(q.customer||'')}<br>${esc(q.ref||'')}</td>
@@ -1071,6 +1111,57 @@ function doPrint(id,mode){
           <div style="border-top:1px solid #aaa;padding-top:4px;font-size:9px;color:#aaa;text-align:center">Signature &amp; Name</div>
         </div>`).join('')}
     </div>`;
+  } else if(mode==='ds'){ // Design Summary — 3-up grid like Windowmaker
+    const ws=q.windows||[];
+    // Build rows of 3
+    const chunks=[]; for(let i=0;i<ws.length;i+=3) chunks.push(ws.slice(i,i+3));
+    body+=`
+    <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:11px">
+      <tr style="background:#555;color:#fff">
+        <td style="padding:5px 8px;font-weight:700;width:33%;border:1px solid #555;text-align:center">Quote</td>
+        <td style="padding:5px 8px;font-weight:700;width:33%;border:1px solid #555;text-align:center">Customer Ref.</td>
+        <td style="padding:5px 8px;font-weight:700;width:33%;border:1px solid #555;text-align:center">Customer</td>
+      </tr>
+      <tr style="background:#fff;font-size:12px">
+        <td style="padding:5px 8px;border:1px solid #aaa;text-align:center">${esc(q.quoteNo||'')}</td>
+        <td style="padding:5px 8px;border:1px solid #aaa;text-align:center">${esc(q.ref||'')}</td>
+        <td style="padding:5px 8px;border:1px solid #aaa;text-align:center">${esc(q.customer||'')}</td>
+      </tr>
+    </table>
+    <table style="width:100%;border-collapse:collapse">
+    ${chunks.map(row=>{
+      // pad row to 3 cells
+      while(row.length<3) row.push(null);
+      return `<tr>${row.map((w,ci)=>{
+        if(!w) return `<td style="border:1px solid #ccc;width:33%"></td>`;
+        const d=dimsOf(w);
+        const wMm=toMm(d.OW), hMm=toMm(d.OH);
+        const cat=DB.rates.catalogue.find(x=>x.code===w.code);
+        const svg=winDiagramSVG(w,100,130);
+        const idx=ws.indexOf(w);
+        return `<td style="border:1px solid #ccc;width:33%;vertical-align:top;padding:7px 8px">
+          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px">
+            <div>
+              <span style="font-weight:800;font-size:13px">${String(idx+1).padStart(4,'0')}</span>
+              <span style="font-size:11px;margin-left:4px">${num(w.qty)||1}</span>
+            </div>
+            <div style="font-size:10px;color:#333;margin-left:auto;text-align:right">
+              <b>${esc(w.name||w.code||'')}</b><br>
+              <span style="color:#666">${esc(w.category||w.wtype||'')}</span>
+            </div>
+          </div>
+          <div style="font-size:10px;color:#444;margin-bottom:4px">${wMm}w × ${hMm}h</div>
+          <div style="text-align:center;margin:6px 0;min-height:60px">${svg}</div>
+          <div style="font-size:9px;color:#555;margin-top:4px;line-height:1.5">
+            ${esc(w.series||'')}${w.finish?` · ${esc(w.finish)}`:''}${w.netting?`<br>Net: ${esc(w.netting)}`:''}
+            ${w.glassThk?`<br>Glass: ${esc(w.glazing||'Single')} ${esc(w.glassThk)}`:''}
+            ${w.glassOuterThk?`<br>Glass: ${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU`:''}
+          </div>
+          <div style="font-size:8px;color:#888;margin-top:3px;font-style:italic">Viewed from Inside</div>
+        </td>`;
+      }).join('')}</tr>`;
+    }).join('')}
+    </table>`;
   }
   const pr=document.getElementById('printRoot'); pr.className='mode-'+mode;
   pr.innerHTML=head+body+`<div style="margin-top:20px;font-size:10px;color:#666">Generated by Pakistan Safety Glass Quotation System · ${new Date().toLocaleDateString()}</div>`;
