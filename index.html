@@ -917,7 +917,7 @@ function doPrint(id,mode){
       </tbody></table></div>`;
 
     // Per-profile cut blocks
-    body+=`<div class="pw"><h3 style="border-bottom:2px solid #1f6feb;padding-bottom:4px;margin-bottom:10px">Aluminium Cut List — ${totalBars} bars total</h3>`;
+    body+=`<h3 style="border-bottom:2px solid #1f6feb;padding-bottom:4px;margin-bottom:10px">Aluminium Cut List — ${totalBars} bars total</h3>`;
     profiles.forEach(prof=>{
       const profTotalBars=prof.windows.reduce((s,r)=>s+r.bars,0);
       body+=`<div style="margin-bottom:10px;border:1px solid #ddd;border-radius:4px;overflow:hidden;page-break-inside:avoid">
@@ -937,7 +937,6 @@ function doPrint(id,mode){
         </tr>`).join('')}
         </tbody></table></div>`;
     });
-    body+=`</div>`;
 
     // Hardware & Glass (side by side)
     body+=`<div class="pw" style="display:flex;gap:20px;flex-wrap:wrap">
