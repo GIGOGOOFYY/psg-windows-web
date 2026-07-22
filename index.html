@@ -109,9 +109,8 @@
     #printRoot td, #printRoot th{ padding:4px 8px !important; }
     #printRoot h3{ margin:9px 0 5px !important; page-break-after:avoid; }
     #printRoot .qh{ margin-bottom:8px !important; padding-bottom:8px !important; }
-    /* breakup & work order: keep each window whole and one per page */
-    .mode-detail .pw, .mode-prod .pw{ page-break-inside:avoid; break-inside:avoid; }
-    .mode-detail .pw ~ .pw, .mode-prod .pw ~ .pw{ page-break-before:always; }
+    /* work order: keep each section together but allow natural flow */
+    .mode-detail .pw, .mode-prod .pw{ page-break-inside:avoid; break-inside:avoid; margin-bottom:14px; }
   }
   #printRoot{display:none;background:#fff;color:#111}
   body.printing #printRoot{display:block;position:fixed;inset:0;z-index:9999;overflow:auto;padding:26px}
