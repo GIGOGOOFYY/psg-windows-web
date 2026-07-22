@@ -83,6 +83,8 @@
   .cattile .ph{height:120px;background:var(--panel2);display:flex;align-items:center;justify-content:center;overflow:hidden}
   .cattile .ph img{max-width:100%;max-height:100%;object-fit:contain}
   .cattile .cap{padding:9px 11px}.cattile .cap b{font-size:12.5px;display:block}
+  .cattile{position:relative}.cat-actions{position:absolute;top:4px;right:4px;display:none;gap:3px}
+  .cattile:hover .cat-actions{display:flex}
   .empty{text-align:center;padding:48px 20px;color:var(--muted)}.empty .big{font-size:34px;margin-bottom:8px}
   .bd-line{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px dashed var(--line)}
   .bd-line.tot{border-bottom:none;font-weight:800;font-size:15px;padding-top:10px;border-top:2px solid var(--line);margin-top:4px}
@@ -851,9 +853,75 @@ function renderProduction(){
 /* ---------- Catalogue ---------- */
 function renderCatalogue(){
   const cats=[...new Set(DB.rates.catalogue.map(c=>c.category))];
-  C().innerHTML=cats.map(cat=>`<h3 style="margin:18px 0 10px">${cat} <span class="muted" style="font-weight:400">(${DB.rates.catalogue.filter(c=>c.category===cat).length})</span></h3>
+  C().innerHTML=`<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+    <span class="muted" style="font-size:13px">${DB.rates.catalogue.length} window types in catalogue</span>
+    <button class="sm green" onclick="openAddCatalogueItem()">+ Add Window Type</button></div>`
+  +cats.map(cat=>`<h3 style="margin:18px 0 10px">${cat} <span class="muted" style="font-weight:400">(${DB.rates.catalogue.filter(c=>c.category===cat).length})</span></h3>
     <div class="catgrid">${DB.rates.catalogue.filter(c=>c.category===cat).map(c=>`<div class="cattile" onclick="catClick('${c.code}')">
-      <div class="ph">${c.img?`<img src="${c.img}">`:'🪟'}</div><div class="cap"><b>${c.code}</b><div class="muted" style="font-size:11px">Handle qty: ${c.handleQty??'—'}</div></div></div>`).join('')}</div>`).join('');
+      <div class="ph">${c.img?`<img src="${c.img}">`:`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="54" height="54"><rect width="60" height="60" fill="none" stroke="#aaa" stroke-width="4"/><rect x="5" y="5" width="50" height="50" fill="#deeeff" stroke="#aaa" stroke-width="2"/><line x1="5" y1="5" x2="55" y2="55" stroke="#bbb" stroke-width="1"/></svg>`}</div>
+      <div class="cap"><b>${c.code}</b><div class="muted" style="font-size:11px">Handle qty: ${c.handleQty??'—'}</div></div>
+      <div class="cat-actions" onclick="event.stopPropagation()">
+        <button class="ghost sm" onclick="editCatalogueItem('${c.code}')" title="Edit">✏️</button>
+        <button class="ghost sm danger" onclick="deleteCatalogueItem('${c.code}')" title="Delete">✕</button>
+      </div></div>`).join('')}</div>`).join('');
+}
+function openAddCatalogueItem(editCode){
+  const existing=editCode?DB.rates.catalogue.find(x=>x.code===editCode):null;
+  const allCats=[...new Set([...DB.rates.catalogue.map(c=>c.category),'Casement','Fixed','Sliding','Awning','Door'])];
+  showModal(`<div class="hd"><h3>${editCode?'Edit':'Add'} Window Type</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
+   <div class="bd" style="display:flex;flex-direction:column;gap:12px">
+     <div class="f2">
+       <div><label style="font-size:12px;font-weight:600">Code / ID</label>
+         <input id="ncCode" placeholder="e.g. PSG-ABC-12345" value="${existing?existing.code:''}" style="width:100%;margin-top:4px" ${editCode?'readonly':''}></div>
+       <div><label style="font-size:12px;font-weight:600">Category</label>
+         <input id="ncCat" list="ncCatList" placeholder="Casement" value="${existing?existing.category:''}" style="width:100%;margin-top:4px">
+         <datalist id="ncCatList">${allCats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
+     </div>
+     <div class="f2">
+       <div><label style="font-size:12px;font-weight:600">Window Type</label>
+         <select id="ncWtype" style="width:100%;margin-top:4px">
+           ${['casement','sliding','fixed','awning'].map(t=>`<option value="${t}" ${existing&&existing.wtype===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
+         </select></div>
+       <div><label style="font-size:12px;font-weight:600">Handle Qty</label>
+         <input id="ncHq" type="number" min="0" max="10" value="${existing?existing.handleQty:1}" style="width:100%;margin-top:4px"></div>
+     </div>
+     <div><label style="font-size:12px;font-weight:600">Image (optional — upload a window drawing PNG/SVG)</label>
+       <input id="ncImgFile" type="file" accept="image/*,.svg" style="margin-top:4px" onchange="previewCatImg(this)">
+       <div id="ncImgPreview" style="margin-top:8px;text-align:center">${existing&&existing.img?`<img src="${existing.img}" style="max-height:120px;border:1px solid var(--line)">`:''}</div>
+       <input type="hidden" id="ncImgData" value="${existing?existing.img||'':''}">
+     </div>
+   </div>
+   <div class="ft"><button onclick="saveCatalogueItem(${editCode?`'${editCode}'`:null})">${editCode?'Save Changes':'Add to Catalogue'}</button></div>`);
+}
+function editCatalogueItem(code){ openAddCatalogueItem(code); }
+function deleteCatalogueItem(code){
+  if(!confirm('Remove "'+code+'" from catalogue?')) return;
+  DB.rates.catalogue=DB.rates.catalogue.filter(c=>c.code!==code); save(); renderCatalogue(); toast('Removed from catalogue');
+}
+function previewCatImg(inp){
+  if(!inp.files[0]) return;
+  const reader=new FileReader();
+  reader.onload=e=>{document.getElementById('ncImgData').value=e.target.result;
+    document.getElementById('ncImgPreview').innerHTML=`<img src="${e.target.result}" style="max-height:120px;border:1px solid var(--line)">`;};
+  reader.readAsDataURL(inp.files[0]);
+}
+function saveCatalogueItem(editCode){
+  const code=(document.getElementById('ncCode').value||'').trim();
+  const cat=(document.getElementById('ncCat').value||'').trim();
+  const wtype=document.getElementById('ncWtype').value;
+  const hq=num(document.getElementById('ncHq').value)||1;
+  const img=document.getElementById('ncImgData').value||'';
+  if(!code||!cat){toast('Code and category are required');return;}
+  if(!editCode && DB.rates.catalogue.find(c=>c.code===code)){toast('Code already exists');return;}
+  if(editCode){
+    const idx=DB.rates.catalogue.findIndex(c=>c.code===editCode);
+    if(idx>=0){DB.rates.catalogue[idx]={...DB.rates.catalogue[idx],category:cat,wtype,handleQty:hq,...(img?{img}:{})};}
+  } else {
+    // Auto-generate code if generic
+    const finalCode=code||('PSG-'+Math.random().toString(36).slice(2,5).toUpperCase()+'-'+Math.floor(Math.random()*90000+10000));
+    DB.rates.catalogue.push({code:finalCode,category:cat,wtype,handleQty:hq,...(img?{img}:{})});
+  }
+  save(); closeModal(); renderCatalogue(); toast(editCode?'Updated':'Added to catalogue');
 }
 function catClick(code){ if(CURR&&curr()){ SUB='design'; addWindow(code); toast('Added to quotation'); go('editor'); } else openImg(code); }
 function openImg(code){ const c=DB.rates.catalogue.find(x=>x.code===code);
