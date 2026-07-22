@@ -715,10 +715,10 @@ function breakdownHTML(r,wid){
     return esc(s.part);
   };
   return `<div class="row" style="margin-top:6px">
-    <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminium)}</span></div>
-      <div class="bd" style="padding:12px 16px">${r.sec.length?r.sec.map(s=>`<div class="bd-line"><span>${s.label} ${profileCell(s)} <span class="muted">${s.width||''} · ${s.length} rft × ${money(s.rate)}</span></span><b>${money(s.amount)}</b></div>`).join(''):'<div class="muted">No profile data for this series/section.</div>'}</div></div>
-    <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Hardware & labour</b><span class="chip">${money(r.hardware)}</span></div>
-      <div class="bd" style="padding:12px 16px">${r.hw.map(h=>`<div class="bd-line"><span>${h.label} <span class="muted">${(Math.round(h.qty*100)/100)} ${h.unit} × ${money(h.rate)}</span></span><b>${money(h.amount)}</b></div>`).join('')}</div></div></div>
+    <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminium*r.qty)}</span></div>
+      <div class="bd" style="padding:12px 16px">${r.sec.length?r.sec.map(s=>`<div class="bd-line"><span>${s.label} ${profileCell(s)} <span class="muted">${s.width||''} · ${Math.round(s.length*r.qty*100)/100} rft × ${money(s.rate)}</span></span><b>${money(s.amount*r.qty)}</b></div>`).join(''):'<div class="muted">No profile data for this series/section.</div>'}</div></div>
+    <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Hardware & labour</b><span class="chip">${money(r.hardware*r.qty)}</span></div>
+      <div class="bd" style="padding:12px 16px">${r.hw.map(h=>`<div class="bd-line"><span>${h.label} <span class="muted">${Math.round(h.qty*r.qty*100)/100} ${h.unit} × ${money(h.rate)}</span></span><b>${money(h.amount*r.qty)}</b></div>`).join('')}</div></div></div>
    <div class="card" style="margin-top:12px"><div class="bd" style="padding:12px 16px">
      <div class="bd-line"><span>Subtotal (aluminium + hardware)</span><b>${money(r.subtotal)}</b></div>
      <div class="bd-line"><span>Profit (${r.profitPct}%)</span><b>${money(r.withProfit-r.subtotal)}</b></div>
@@ -990,10 +990,10 @@ function doPrint(id,mode){
         <tbody>${r.sec.map(s=>`<tr><td>${s.label}</td><td>${esc(s.part)} ${s.width||''}</td><td style="text-align:right">${s.length} rft</td><td style="text-align:right">${money(s.rate)}</td><td style="text-align:right">${money(s.amount)}</td></tr>`).join('')||'<tr><td colspan=5 style="color:#999">No profile data</td></tr>'}
          <tr><td colspan=4 style="text-align:right"><b>Aluminium subtotal</b></td><td style="text-align:right"><b>${money(r.aluminium)}</b></td></tr></tbody></table>
        <table style="margin-bottom:6px"><thead><tr><th>Hardware / labour</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-        <tbody>${r.hw.map(h=>`<tr><td>${h.label}</td><td style="text-align:right">${(Math.round(h.qty*100)/100)} ${h.unit}</td><td style="text-align:right">${money(h.rate)}</td><td style="text-align:right">${money(h.amount)}</td></tr>`).join('')}
-         <tr><td colspan=3 style="text-align:right"><b>Hardware subtotal</b></td><td style="text-align:right"><b>${money(r.hardware)}</b></td></tr></tbody></table>
-       <table style="margin-bottom:16px"><tbody><tr><td>Subtotal</td><td style="text-align:right">${money(r.subtotal)}</td></tr>
-        <tr><td>Profit (${r.profitPct}%)</td><td style="text-align:right">${money(r.withProfit-r.subtotal)}</td></tr>
+        <tbody>${r.hw.map(h=>`<tr><td>${h.label}</td><td style="text-align:right">${Math.round(h.qty*r.qty*100)/100} ${h.unit}</td><td style="text-align:right">${money(h.rate)}</td><td style="text-align:right">${money(h.amount*r.qty)}</td></tr>`).join('')}
+         <tr><td colspan=3 style="text-align:right"><b>Hardware subtotal</b></td><td style="text-align:right"><b>${money(r.hardware*r.qty)}</b></td></tr></tbody></table>
+       <table style="margin-bottom:16px"><tbody><tr><td>Subtotal</td><td style="text-align:right">${money(r.subtotal*r.qty)}</td></tr>
+        <tr><td>Profit (${r.profitPct}%)</td><td style="text-align:right">${money((r.withProfit-r.subtotal)*r.qty)}</td></tr>
         <tr><td><b>Per unit (${money(r.perSqft)}/sqft · ${r.area.toFixed(2)} sqft)</b></td><td style="text-align:right"><b>${money(r.withProfit)}</b></td></tr>
         <tr><td><b>Line total × ${r.qty}</b></td><td style="text-align:right"><b>${money(r.lineTotal)}</b></td></tr></tbody></table></div>`;});
     body+=`<h3 style="text-align:right;border-top:2px solid #333;padding-top:10px">GRAND TOTAL: ${money(grand)}</h3>`;
