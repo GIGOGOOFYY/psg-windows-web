@@ -1124,7 +1124,7 @@ function doPrint(id,mode){
            ${g.totalSpacer?`<tr><td style="padding-left:16px">Spacer bar ${esc(g.spacer||'')}</td><td style="text-align:right">${g.totalSpacer} rft</td></tr>`:''}`;
          return `<tr><td>${esc(g.outer)} ${esc(g.outerThk)} · ${dim}</td><td style="text-align:right">${u} pane${u!=1?'s':''}</td></tr>`;
        }).join('')}</tbody></table></div>`;
-  } else { // prod — grouped-by-profile work order
+  } else if(mode==='prod'){ // prod — grouped-by-profile work order
     const profiles=calcWOProfiles(q), allBom=calcBOM(q);
     const hwAgg={}; (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty*wq; }); });
     const totalBars=allBom.totalBars;
