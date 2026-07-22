@@ -938,22 +938,18 @@ function doPrint(id,mode){
         </tbody></table></div>`;
     });
 
-    // Hardware & Glass (side by side)
-    body+=`<div class="pw" style="display:flex;gap:20px;flex-wrap:wrap">
-      <div style="flex:1;min-width:240px">
-        <h3>Hardware &amp; Accessories</h3>
-        <table><thead><tr><th>Item</th><th style="text-align:right">Total Qty</th></tr></thead><tbody>
-        ${Object.entries(hwAgg).map(([k,v])=>{const[it,un]=k.split('|');return `<tr><td>${esc(it)}</td><td style="text-align:right">${Math.round(v*100)/100} ${un}</td></tr>`;}).join('')}
-        </tbody></table>
-      </div>
-      <div style="flex:1;min-width:240px">
-        <h3>Glass Schedule</h3>
-        <table><thead><tr><th>#</th><th>Window</th><th>Type</th><th style="text-align:center">Size (mm)</th><th style="text-align:right">Panes</th><th style="text-align:right">Area</th></tr></thead><tbody>
-        ${(q.windows||[]).map((w,i)=>{const g=glassOf(w);const wMm=Math.round(g.paneW*304.8),hMm=Math.round(g.paneH*304.8);
-          return `<tr><td style="font-family:monospace;font-weight:700;color:#1f6feb;font-size:11px">/${String(i+1).padStart(2,'0')}</td><td>${esc(w.name||w.code||'')}</td><td style="font-size:11px">${esc(g.label)}</td><td style="text-align:center;font-family:monospace">${wMm}×${hMm}</td><td style="text-align:right">${g.panes}</td><td style="text-align:right">${g.areaSft} Sft</td></tr>
-          ${g.spacerRft?`<tr><td colspan=3 style="padding-left:14px;color:#666;font-size:11px">Spacer bar ${esc(g.spacer||'')}</td><td></td><td></td><td style="text-align:right">${g.spacerRft} rft</td></tr>`:''}`; }).join('')}
-        </tbody></table>
-      </div>
+    // Glass Schedule (top) then Hardware (bottom)
+    body+=`<div class="pw">
+      <h3>Glass Schedule</h3>
+      <table style="margin-bottom:14px"><thead><tr><th>#</th><th>Window</th><th>Type</th><th style="text-align:center">Size (mm)</th><th style="text-align:right">Panes</th><th style="text-align:right">Area</th></tr></thead><tbody>
+      ${(q.windows||[]).map((w,i)=>{const g=glassOf(w);const wMm=Math.round(g.paneW*304.8),hMm=Math.round(g.paneH*304.8);
+        return `<tr><td style="font-family:monospace;font-weight:700;color:#1f6feb;font-size:11px">/${String(i+1).padStart(2,'0')}</td><td>${esc(w.name||w.code||'')}</td><td style="font-size:11px">${esc(g.label)}</td><td style="text-align:center;font-family:monospace">${wMm}×${hMm}</td><td style="text-align:right">${g.panes}</td><td style="text-align:right">${g.areaSft} Sft</td></tr>
+        ${g.spacerRft?`<tr><td colspan=3 style="padding-left:14px;color:#666;font-size:11px">Spacer bar ${esc(g.spacer||'')}</td><td></td><td></td><td style="text-align:right">${g.spacerRft} rft</td></tr>`:''}`; }).join('')}
+      </tbody></table>
+      <h3>Hardware &amp; Accessories</h3>
+      <table><thead><tr><th>Item</th><th style="text-align:right">Total Qty</th></tr></thead><tbody>
+      ${Object.entries(hwAgg).map(([k,v])=>{const[it,un]=k.split('|');return `<tr><td>${esc(it)}</td><td style="text-align:right">${Math.round(v*100)/100} ${un}</td></tr>`;}).join('')}
+      </tbody></table>
     </div>`;
 
     // Signature boxes
