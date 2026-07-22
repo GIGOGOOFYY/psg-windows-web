@@ -1181,7 +1181,6 @@ function doPrint(id,mode){
     </div>`;
   } else if(mode==='ds'){ // Design Summary — 3-up grid like Windowmaker
     const ws=q.windows||[];
-    // Build rows of 3
     const chunks=[]; for(let i=0;i<ws.length;i+=3) chunks.push(ws.slice(i,i+3));
     body+=`
     <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:11px">
@@ -1198,36 +1197,48 @@ function doPrint(id,mode){
     </table>
     <table style="width:100%;border-collapse:collapse">
     ${chunks.map(row=>{
-      // pad row to 3 cells
       while(row.length<3) row.push(null);
       return `<tr>${row.map((w,ci)=>{
         if(!w) return `<td style="border:1px solid #ccc;width:33%"></td>`;
         const d=dimsOf(w);
         const wMm=toMm(d.OW), hMm=toMm(d.OH);
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
-        const imgHtml=cat&&cat.img
-          ?`<img src="${cat.img}" style="max-width:110px;max-height:130px;object-fit:contain;display:block;margin:0 auto">`
-          :winDiagramSVG(w,100,130);
+        const picHtml=cat&&cat.img
+          ?`<img src="${cat.img}" style="width:90px;height:110px;object-fit:contain;display:block">`
+          :winDiagramSVG(w,90,110);
         const idx=ws.indexOf(w);
-        return `<td style="border:1px solid #ccc;width:33%;vertical-align:top;padding:7px 8px">
-          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px">
+        const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
+        return `<td style="border:1px solid #333;width:33%;vertical-align:top;padding:6px 7px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
             <div>
-              <span style="font-weight:800;font-size:13px">${String(idx+1).padStart(4,'0')}</span>
-              <span style="font-size:11px;margin-left:4px">${num(w.qty)||1}</span>
+              <span style="font-weight:900;font-size:12px">${String(idx+1).padStart(4,'0')}</span>
+              <span style="font-size:10px;color:#555;margin-left:4px">${num(w.qty)||1}</span>
             </div>
-            <div style="font-size:10px;color:#333;margin-left:auto;text-align:right">
-              <b>${esc(w.name||w.code||'')}</b><br>
-              <span style="color:#666">${esc(w.category||w.wtype||'')}</span>
+            <div style="font-size:10px;text-align:right;color:#333;line-height:1.4">
+              <b>${esc(wLabel)}</b><br>
+              <span style="color:#666;font-size:9px">${esc(w.category||w.wtype||'')}</span>
             </div>
           </div>
-          <div style="font-size:10px;color:#444;margin-bottom:4px">${wMm}w × ${hMm}h</div>
-          <div style="text-align:center;margin:6px 0;min-height:60px">${imgHtml}</div>
-          <div style="font-size:9px;color:#555;margin-top:4px;line-height:1.5">
-            ${esc(w.series||'')}${w.finish?` · ${esc(w.finish)}`:''}${w.netting?`<br>Net: ${esc(w.netting)}`:''}
-            ${w.glassThk?`<br>Glass: ${esc(w.glazing||'Single')} ${esc(w.glassThk)}`:''}
-            ${w.glassOuterThk?`<br>Glass: ${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU`:''}
+          <div style="display:flex;gap:5px;align-items:flex-start">
+            <div style="flex-shrink:0">
+              <div style="display:flex;gap:2px;align-items:stretch">
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:16px;padding:0 1px">
+                  <span style="color:#cc0000;font-size:8px;line-height:1">↑</span>
+                  <span style="color:#cc0000;font-size:7px;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0.5px;line-height:1;margin:2px 0">${hMm}</span>
+                  <span style="color:#cc0000;font-size:8px;line-height:1">↓</span>
+                </div>
+                <div>${picHtml}</div>
+              </div>
+              <div style="text-align:center;color:#cc0000;font-size:7.5px;margin-top:2px;padding-left:18px">←${wMm}→</div>
+              <div style="font-size:7.5px;color:#cc0000;font-style:italic;margin-top:3px;padding-left:18px">Viewed from Inside</div>
+            </div>
+            <div style="font-size:9px;color:#333;line-height:1.7;flex:1;padding-top:2px">
+              ${w.series?`<div><b>${esc(w.series)}</b></div>`:''}
+              ${w.finish?`<div>${esc(w.finish)}</div>`:''}
+              ${w.netting?`<div>Net: ${esc(w.netting)}</div>`:''}
+              ${w.glassOuterThk?`<div>${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU</div>`:w.glassThk?`<div>${esc(w.glazing||'Single')} ${esc(w.glassThk)}</div>`:''}
+            </div>
           </div>
-          <div style="font-size:8px;color:#888;margin-top:3px;font-style:italic">Viewed from Inside</div>
         </td>`;
       }).join('')}</tr>`;
     }).join('')}
