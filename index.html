@@ -1083,7 +1083,7 @@ function doPrint(id,mode){
   let body='';
   if(mode==='quote'){
     let rows='',grand=0,n=0;
-    (q.windows||[]).forEach(w=>{const r=calcWindow(w);grand+=r.lineTotal;n++;const c=DB.rates.catalogue.find(x=>x.code===w.code);
+    (q.windows||[]).forEach(w=>{const r=calcWindow(w);grand+=r.lineTotal;n++;const c=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
       rows+=`<tr><td>${String(n).padStart(4,'0')}</td><td>${c&&c.img?`<img src="${c.img}" style="width:44px;height:44px;object-fit:contain">`:''}</td>
         <td><b>${esc(w.name||w.code||'Window')}</b><br><span style="color:#555;font-size:11px">${esc(w.series||'')} · ${esc(w.finish||'')} · ${dimStr(w)}</span></td>
         <td style="text-align:center">${r.qty}</td><td style="text-align:right">${money(r.perSqft)}</td><td style="text-align:right">${money(r.lineTotal)}</td></tr>`;});
@@ -1204,7 +1204,7 @@ function doPrint(id,mode){
         if(!w) return `<td style="border:1px solid #ccc;width:33%"></td>`;
         const d=dimsOf(w);
         const wMm=toMm(d.OW), hMm=toMm(d.OH);
-        const cat=DB.rates.catalogue.find(x=>x.code===w.code);
+        const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
         const imgHtml=cat&&cat.img
           ?`<img src="${cat.img}" style="max-width:110px;max-height:130px;object-fit:contain;display:block;margin:0 auto">`
           :winDiagramSVG(w,100,130);
