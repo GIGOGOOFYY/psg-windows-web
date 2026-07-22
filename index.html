@@ -1061,6 +1061,63 @@ function winDiagramSVG(w,maxW,maxH){
     ${inner}
   </svg>`;
 }
+function dsSVG(w,cat){
+  /* Returns an SVG with the catalogue photo (or line diagram) + red dimension arrows.
+     Handles transom windows by showing separate H values for top + bottom sections. */
+  const d=dimsOf(w);
+  const OH=d.OH||1,OW=d.OW||1,SH=d.SH||OH;
+  const wMm=toMm(OW),hMm=toMm(OH),shMm=toMm(SH);
+  const hasTransom=(SH<OH*0.92);
+  // Scale image to fit ~90×115 area keeping aspect ratio
+  const aspect=OH/OW;
+  let iW=90,iH=Math.round(90*aspect);
+  if(iH>115){iH=115;iW=Math.round(115/aspect);}
+  const DL=24,DB=22,DR=hasTransom?26:0;
+  const svgW=DL+iW+DR+2,svgH=iH+DB;
+  const ix=DL,iy=0;
+  // Image element
+  const imgEl=cat&&cat.img
+    ?`<image href="${cat.img}" x="${ix}" y="${iy}" width="${iW}" height="${iH}" preserveAspectRatio="xMidYMid meet"/>`
+    :`<image href="" x="${ix}" y="${iy}" width="${iW}" height="${iH}"/>`;// fallback: no img
+  // Height dim (left side)
+  const hx=DL-14;
+  const arrowSize=5;
+  let s=`
+    <line x1="${hx}" y1="${iy}" x2="${hx}" y2="${iy+iH}" stroke="#cc0000" stroke-width="1.3"/>
+    <line x1="${hx-3}" y1="${iy}" x2="${ix-1}" y2="${iy}" stroke="#cc0000" stroke-width="0.9"/>
+    <line x1="${hx-3}" y1="${iy+iH}" x2="${ix-1}" y2="${iy+iH}" stroke="#cc0000" stroke-width="0.9"/>
+    <polygon points="${hx},${iy+arrowSize} ${hx-3},${iy+arrowSize+8} ${hx+3},${iy+arrowSize+8}" fill="#cc0000"/>
+    <polygon points="${hx},${iy+iH-arrowSize} ${hx-3},${iy+iH-arrowSize-8} ${hx+3},${iy+iH-arrowSize-8}" fill="#cc0000"/>
+    <text transform="rotate(-90,${hx-7},${iy+iH/2})" x="${hx-7}" y="${iy+iH/2}"
+      fill="#cc0000" font-size="10" font-family="Arial,sans-serif" font-weight="bold"
+      text-anchor="middle" dominant-baseline="middle">${hMm}</text>`;
+  // Transom divider — dashed line + right-side sub-dimensions
+  if(hasTransom){
+    const transomPx=iH*(1-SH/OH);
+    const divY=iy+transomPx;
+    const rx=ix+iW+4;
+    s+=`
+      <line x1="${ix}" y1="${divY}" x2="${ix+iW}" y2="${divY}" stroke="#cc0000" stroke-width="0.9" stroke-dasharray="3,2"/>
+      <line x1="${rx}" y1="${iy}" x2="${rx}" y2="${iy+iH}" stroke="#cc0000" stroke-width="1"/>
+      <line x1="${rx}" y1="${iy}" x2="${rx+5}" y2="${iy}" stroke="#cc0000" stroke-width="0.8"/>
+      <line x1="${rx}" y1="${divY}" x2="${rx+5}" y2="${divY}" stroke="#cc0000" stroke-width="0.8"/>
+      <line x1="${rx}" y1="${iy+iH}" x2="${rx+5}" y2="${iy+iH}" stroke="#cc0000" stroke-width="0.8"/>
+      <text x="${rx+8}" y="${iy+transomPx/2}" fill="#cc0000" font-size="9" font-family="Arial,sans-serif" font-weight="bold" dominant-baseline="middle">${hMm-shMm}</text>
+      <text x="${rx+8}" y="${divY+(iH-transomPx)/2}" fill="#cc0000" font-size="9" font-family="Arial,sans-serif" font-weight="bold" dominant-baseline="middle">${shMm}</text>`;
+  }
+  // Width dim (bottom)
+  const wy=iy+iH+11;
+  s+=`
+    <line x1="${ix}" y1="${wy}" x2="${ix+iW}" y2="${wy}" stroke="#cc0000" stroke-width="1.3"/>
+    <line x1="${ix}" y1="${iy+iH}" x2="${ix}" y2="${wy+3}" stroke="#cc0000" stroke-width="0.9"/>
+    <line x1="${ix+iW}" y1="${iy+iH}" x2="${ix+iW}" y2="${wy+3}" stroke="#cc0000" stroke-width="0.9"/>
+    <polygon points="${ix+arrowSize},${wy} ${ix+arrowSize+8},${wy-3} ${ix+arrowSize+8},${wy+3}" fill="#cc0000"/>
+    <polygon points="${ix+iW-arrowSize},${wy} ${ix+iW-arrowSize-8},${wy-3} ${ix+iW-arrowSize-8},${wy+3}" fill="#cc0000"/>
+    <text x="${ix+iW/2}" y="${wy+12}" fill="#cc0000" font-size="10" font-family="Arial,sans-serif"
+      font-weight="bold" text-anchor="middle">${wMm}</text>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+    viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}">${imgEl}${s}</svg>`;
+}
 function openPrint(id){
   showModal(`<div class="hd"><h3>Print / PDF</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
    <div class="bd"><p class="muted" style="margin-top:0">Choose what to print. Use your browser's "Save as PDF" in the print dialog.</p>
@@ -1203,11 +1260,9 @@ function doPrint(id,mode){
         const d=dimsOf(w);
         const wMm=toMm(d.OW), hMm=toMm(d.OH);
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
-        const picHtml=cat&&cat.img
-          ?`<img src="${cat.img}" style="width:90px;height:110px;object-fit:contain;display:block">`
-          :winDiagramSVG(w,90,110);
         const idx=ws.indexOf(w);
         const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
+        const svgPic=dsSVG(w,cat);
         return `<td style="border:1px solid #333;width:33%;vertical-align:top;padding:6px 7px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
             <div>
@@ -1219,20 +1274,12 @@ function doPrint(id,mode){
               <span style="color:#666;font-size:9px">${esc(w.category||w.wtype||'')}</span>
             </div>
           </div>
-          <div style="display:flex;gap:5px;align-items:flex-start">
+          <div style="display:flex;gap:8px;align-items:flex-start">
             <div style="flex-shrink:0">
-              <div style="display:flex;gap:2px;align-items:stretch">
-                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:16px;padding:0 1px">
-                  <span style="color:#cc0000;font-size:8px;line-height:1">↑</span>
-                  <span style="color:#cc0000;font-size:7px;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0.5px;line-height:1;margin:2px 0">${hMm}</span>
-                  <span style="color:#cc0000;font-size:8px;line-height:1">↓</span>
-                </div>
-                <div>${picHtml}</div>
-              </div>
-              <div style="text-align:center;color:#cc0000;font-size:7.5px;margin-top:2px;padding-left:18px">←${wMm}→</div>
-              <div style="font-size:7.5px;color:#cc0000;font-style:italic;margin-top:3px;padding-left:18px">Viewed from Inside</div>
+              ${svgPic}
+              <div style="font-size:8px;color:#cc0000;font-style:italic;margin-top:3px;padding-left:22px">Viewed from Inside</div>
             </div>
-            <div style="font-size:9px;color:#333;line-height:1.7;flex:1;padding-top:2px">
+            <div style="font-size:9.5px;color:#333;line-height:1.75;flex:1;padding-top:2px">
               ${w.series?`<div><b>${esc(w.series)}</b></div>`:''}
               ${w.finish?`<div>${esc(w.finish)}</div>`:''}
               ${w.netting?`<div>Net: ${esc(w.netting)}</div>`:''}
