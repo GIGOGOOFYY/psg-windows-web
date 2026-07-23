@@ -1270,78 +1270,106 @@ function doPrint(id,mode){
         if(!w) return `<td style="border:1px solid #333;width:33%"></td>`;
         const d=dimsOf(w);
         const OW=d.OW||1,OH=d.OH||1,SH=d.SH||OH,SW=d.SW||OW;
-        const wMm=toMm(OW),hMm=toMm(OH),shMm=toMm(SH),swMm=toMm(SW);
+        const wMm=toMm(OW),hMm=toMm(OH),swMm=toMm(SW);
         const wtype=w.wtype||'casement';
-        // For sliding: show two panel arrows. For others: one arrow.
         const isTwoPanelW=(wtype==='sliding'||wtype==='lift-slide')&&SW<OW*0.9;
-        const widthArrow=isTwoPanelW
-          ?`<span style="font-size:10px;font-weight:700;color:#cc0000;font-family:Arial">←${swMm}→←${wMm-swMm}→</span>`
-          :`<span style="font-size:10px;font-weight:700;color:#cc0000;font-family:Arial">←${wMm}→</span>`;
-        // Catalogue image or placeholder
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
-        // Scale image to max 95w × 120h
-        const aspect=OH/OW; let iW=95,iH=Math.round(95*aspect);
-        if(iH>120){iH=120;iW=Math.round(120/aspect);}
+        // Scale image: max 90w × 115h
+        const aspect=OH/OW; let iW=90,iH=Math.round(90*aspect);
+        if(iH>115){iH=115;iW=Math.round(115/aspect);}
         const picHtml=cat&&cat.img
-          ?`<img src="${cat.img}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #ccc">`
+          ?`<img src="${cat.img}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #bbb">`
           :winDiagramSVG(w,iW,iH);
         const idx=ws.indexOf(w);
         const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
+        // --- Isolated SVG for HEIGHT dimension (left side) ---
+        const DH=22; // width of height-dim SVG column
+        const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
+        const multiSec=rawSec.length>=2;
+        let heightSvg;
+        if(multiSec){
+          const total=rawSec.reduce((a,b)=>a+b,0)||OH;
+          const segs=rawSec.map(h=>({h,px:Math.round(iH*h/total)}));
+          const ah=5; // arrowhead size
+          const lx=DH-6; // x of vertical line
+          let s=`<line x1="${lx}" y1="0" x2="${lx}" y2="${iH}" stroke="#cc0000" stroke-width="1.5"/>`;
+          // top arrowhead
+          s+=`<polygon points="${lx},0 ${lx-3},${ah} ${lx+3},${ah}" fill="#cc0000"/>`;
+          // bottom arrowhead
+          s+=`<polygon points="${lx},${iH} ${lx-3},${iH-ah} ${lx+3},${iH-ah}" fill="#cc0000"/>`;
+          // tick marks + labels per section
+          let cy=0;
+          segs.forEach((seg,si)=>{
+            const mid=cy+seg.px/2;
+            // rotated text label
+            s+=`<text x="${lx-8}" y="${mid}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000" transform="rotate(-90,${lx-8},${mid})">${seg.h}</text>`;
+            cy+=seg.px;
+            if(si<segs.length-1){
+              // tick mark (cross-bar) at division
+              s+=`<line x1="${lx-5}" y1="${cy}" x2="${lx+5}" y2="${cy}" stroke="#cc0000" stroke-width="1.5"/>`;
+            }
+          });
+          heightSvg=`<svg width="${DH}" height="${iH}" style="display:block;overflow:visible" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+        } else {
+          const ah=5;
+          const lx=DH-6;
+          const mid=iH/2;
+          let s=`<line x1="${lx}" y1="0" x2="${lx}" y2="${iH}" stroke="#cc0000" stroke-width="1.5"/>`;
+          s+=`<polygon points="${lx},0 ${lx-3},${ah} ${lx+3},${ah}" fill="#cc0000"/>`;
+          s+=`<polygon points="${lx},${iH} ${lx-3},${iH-ah} ${lx+3},${iH-ah}" fill="#cc0000"/>`;
+          s+=`<text x="${lx-8}" y="${mid}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000" transform="rotate(-90,${lx-8},${mid})">${hMm}</text>`;
+          heightSvg=`<svg width="${DH}" height="${iH}" style="display:block;overflow:visible" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+        }
+        // --- Isolated SVG for WIDTH dimension (top) ---
+        const DW=16; // height of width-dim SVG row
+        const ah2=5;
+        let wSvg;
+        if(isTwoPanelW){
+          const p1px=Math.round(iW*swMm/(wMm||1));
+          const p2px=iW-p1px;
+          const ly=DW-4;
+          let s=`<line x1="0" y1="${ly}" x2="${iW}" y2="${ly}" stroke="#cc0000" stroke-width="1.5"/>`;
+          // outer arrowheads
+          s+=`<polygon points="0,${ly} ${ah2},${ly-3} ${ah2},${ly+3}" fill="#cc0000"/>`;
+          s+=`<polygon points="${iW},${ly} ${iW-ah2},${ly-3} ${iW-ah2},${ly+3}" fill="#cc0000"/>`;
+          // center tick
+          s+=`<line x1="${p1px}" y1="${ly-5}" x2="${p1px}" y2="${ly+5}" stroke="#cc0000" stroke-width="1.5"/>`;
+          // labels
+          s+=`<text x="${p1px/2}" y="${ly-5}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000">${swMm}</text>`;
+          s+=`<text x="${p1px+p2px/2}" y="${ly-5}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000">${wMm-swMm}</text>`;
+          wSvg=`<svg width="${iW}" height="${DW}" style="display:block;overflow:visible" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+        } else {
+          const ly=DW-4;
+          let s=`<line x1="0" y1="${ly}" x2="${iW}" y2="${ly}" stroke="#cc0000" stroke-width="1.5"/>`;
+          s+=`<polygon points="0,${ly} ${ah2},${ly-3} ${ah2},${ly+3}" fill="#cc0000"/>`;
+          s+=`<polygon points="${iW},${ly} ${iW-ah2},${ly-3} ${iW-ah2},${ly+3}" fill="#cc0000"/>`;
+          s+=`<text x="${iW/2}" y="${ly-5}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000">${wMm}</text>`;
+          wSvg=`<svg width="${iW}" height="${DW}" style="display:block;overflow:visible" xmlns="http://www.w3.org/2000/svg">${s}</svg>`;
+        }
         return `<td style="border:1px solid #333;width:33%;vertical-align:top;padding:5px 6px;font-family:Arial,sans-serif">
-          <!-- Header row: number+qty left, window name+type right -->
+          <!-- Header -->
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
             <div>
               <span style="font-weight:900;font-size:12px;color:#000">${String(idx+1).padStart(4,'0')}</span>
               <span style="font-size:10px;color:#555;margin-left:5px">${num(w.qty)||1}</span>
             </div>
-            <div style="font-size:10px;text-align:right;color:#000;line-height:1.3">
-              <b>${esc(wLabel)}</b>
-            </div>
+            <div style="font-size:10px;text-align:right;color:#000;line-height:1.3"><b>${esc(wLabel)}</b></div>
           </div>
-          <!-- Dimensions text line -->
           <div style="font-size:10px;color:#000;margin-bottom:3px">${wMm}w × ${hMm}h</div>
-          <!-- Body: [height_dim + image_block] | details -->
+          <!-- Body: dim block | details -->
           <div style="display:flex;gap:7px;align-items:flex-start">
-            <!-- Left: width arrow above, then [height-arrow | image] -->
+            <!-- Dim block: height SVG left of image, width SVG above image -->
             <div style="flex-shrink:0">
-              <!-- Width arrow above image, aligned to image left edge (20px offset for height col) -->
-              <div style="padding-left:20px;margin-bottom:2px;text-align:center;width:${iW+20}px">${widthArrow}</div>
-              <!-- Height arrow + image side by side -->
-              <div style="display:flex;align-items:stretch;gap:0">
-                <!-- Height dim column — single or multi-section -->
-                ${(()=>{
-                  const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
-                  if(rawSec.length>=2){
-                    // Multi-section: draw stacked segments proportionally
-                    const total=rawSec.reduce((a,b)=>a+b,0)||OH;
-                    const segs=rawSec.map(h=>({h,px:Math.round(iH*h/total)}));
-                    let html=`<div style="display:flex;flex-direction:column;width:20px;align-items:center">`;
-                    html+=`<span style="color:#cc0000;font-size:10px;line-height:1;font-family:Arial">↑</span>`;
-                    segs.forEach((seg,si)=>{
-                      html+=`<div style="flex:0 0 ${seg.px}px;display:flex;align-items:center;justify-content:center;position:relative">`;
-                      html+=`<div style="position:absolute;left:8px;top:0;bottom:0;width:1px;background:#cc0000"></div>`;
-                      html+=`<span style="color:#cc0000;font-size:9px;font-weight:700;writing-mode:vertical-rl;transform:rotate(180deg);font-family:Arial;z-index:1">${seg.h}</span>`;
-                      html+=`</div>`;
-                      if(si<segs.length-1) html+=`<span style="color:#cc0000;font-size:8px;line-height:1;font-family:Arial">✕</span>`;
-                    });
-                    html+=`<span style="color:#cc0000;font-size:10px;line-height:1;font-family:Arial">↓</span>`;
-                    html+=`</div>`;
-                    return html;
-                  } else {
-                    return `<div style="display:flex;flex-direction:column;justify-content:space-between;align-items:center;width:20px;padding:2px 0">
-                      <span style="color:#cc0000;font-size:11px;line-height:1;font-family:Arial">↑</span>
-                      <span style="color:#cc0000;font-size:10px;font-weight:700;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0;font-family:Arial">${hMm}</span>
-                      <span style="color:#cc0000;font-size:11px;line-height:1;font-family:Arial">↓</span>
-                    </div>`;
-                  }
-                })()}
-                <!-- Image -->
-                <div>${picHtml}</div>
+              <!-- Width SVG row: offset by DH to align over image only -->
+              <div style="margin-left:${DH}px;margin-bottom:2px">${wSvg}</div>
+              <!-- Height SVG + Image row -->
+              <div style="display:flex;align-items:flex-start;gap:0">
+                ${heightSvg}
+                <div style="line-height:0">${picHtml}</div>
               </div>
-              <!-- Viewed from Inside -->
-              <div style="padding-left:20px;margin-top:4px;font-size:9px;color:#cc0000;font-style:italic;font-weight:600;font-family:Arial">Viewed from Inside</div>
+              <div style="margin-left:${DH}px;margin-top:3px;font-size:8px;color:#cc0000;font-style:italic;font-weight:600;font-family:Arial">Viewed from Inside</div>
             </div>
-            <!-- Right: details text — all explicitly black -->
+            <!-- Details -->
             <div style="font-size:10px;color:#000;line-height:1.7;flex:1;padding-top:2px;font-family:Arial">
               ${w.category?`<div style="color:#000">${esc(w.category)}</div>`:''}
               ${w.series?`<div style="color:#000">${esc(w.series)}</div>`:''}
