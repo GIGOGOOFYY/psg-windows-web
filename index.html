@@ -697,6 +697,12 @@ function winFormHTML(w,r){
      <div></div><div></div>
    </div>`}
    <div class="f4" style="border-top:1px solid var(--line);padding-top:12px">
+     <div class="field" style="grid-column:1/-1">
+       <label>Section Heights — mm, comma-separated top→bottom <span class="muted" style="text-transform:none">(optional · for Design Summary dimension lines e.g. 772,650,773)</span></label>
+       <input data-k="sectionHeights" value="${esc(w.sectionHeights||'')}" ${bind} placeholder="e.g. 772,650,773" style="font-family:monospace">
+     </div>
+   </div>
+   <div class="f4" style="border-top:1px solid var(--line);padding-top:12px">
      <div class="field"><label>Glazing</label><select data-k="glazing" ${bind}>${opt(IL.glazing,w.glazing||'Single')}</select></div>
      ${isDouble?`
        <div class="field"><label>Spacer size</label><select data-k="spacer" ${bind}>${optBlank(spacerList,w.spacer)}</select></div>
@@ -1261,34 +1267,87 @@ function doPrint(id,mode){
     ${chunks.map(row=>{
       while(row.length<3) row.push(null);
       return `<tr>${row.map((w,ci)=>{
-        if(!w) return `<td style="border:1px solid #ccc;width:33%"></td>`;
+        if(!w) return `<td style="border:1px solid #333;width:33%"></td>`;
         const d=dimsOf(w);
-        const wMm=toMm(d.OW), hMm=toMm(d.OH);
+        const OW=d.OW||1,OH=d.OH||1,SH=d.SH||OH,SW=d.SW||OW;
+        const wMm=toMm(OW),hMm=toMm(OH),shMm=toMm(SH),swMm=toMm(SW);
+        const wtype=w.wtype||'casement';
+        // For sliding: show two panel arrows. For others: one arrow.
+        const isTwoPanelW=(wtype==='sliding'||wtype==='lift-slide')&&SW<OW*0.9;
+        const widthArrow=isTwoPanelW
+          ?`<span style="font-size:10px;font-weight:700;color:#cc0000;font-family:Arial">←${swMm}→←${wMm-swMm}→</span>`
+          :`<span style="font-size:10px;font-weight:700;color:#cc0000;font-family:Arial">←${wMm}→</span>`;
+        // Catalogue image or placeholder
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
+        // Scale image to max 95w × 120h
+        const aspect=OH/OW; let iW=95,iH=Math.round(95*aspect);
+        if(iH>120){iH=120;iW=Math.round(120/aspect);}
+        const picHtml=cat&&cat.img
+          ?`<img src="${cat.img}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #ccc">`
+          :winDiagramSVG(w,iW,iH);
         const idx=ws.indexOf(w);
         const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
-        const svgPic=dsSVG(w,cat);
-        return `<td style="border:1px solid #333;width:33%;vertical-align:top;padding:6px 7px">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
+        return `<td style="border:1px solid #333;width:33%;vertical-align:top;padding:5px 6px;font-family:Arial,sans-serif">
+          <!-- Header row: number+qty left, window name+type right -->
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
             <div>
-              <span style="font-weight:900;font-size:12px">${String(idx+1).padStart(4,'0')}</span>
-              <span style="font-size:10px;color:#555;margin-left:4px">${num(w.qty)||1}</span>
+              <span style="font-weight:900;font-size:12px;color:#000">${String(idx+1).padStart(4,'0')}</span>
+              <span style="font-size:10px;color:#555;margin-left:5px">${num(w.qty)||1}</span>
             </div>
-            <div style="font-size:10px;text-align:right;color:#333;line-height:1.4">
-              <b>${esc(wLabel)}</b><br>
-              <span style="color:#666;font-size:9px">${esc(w.category||w.wtype||'')}</span>
+            <div style="font-size:10px;text-align:right;color:#000;line-height:1.3">
+              <b>${esc(wLabel)}</b>
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:flex-start">
-            <div style="flex-shrink:0;color:#000">
-              ${svgPic}
-              <div style="font-size:9px;color:#cc0000;font-style:italic;font-weight:600;margin-top:3px;padding-left:28px">Viewed from Inside</div>
+          <!-- Dimensions text line -->
+          <div style="font-size:10px;color:#000;margin-bottom:3px">${wMm}w × ${hMm}h</div>
+          <!-- Body: [height_dim + image_block] | details -->
+          <div style="display:flex;gap:7px;align-items:flex-start">
+            <!-- Left: width arrow above, then [height-arrow | image] -->
+            <div style="flex-shrink:0">
+              <!-- Width arrow above image, aligned to image left edge (20px offset for height col) -->
+              <div style="padding-left:20px;margin-bottom:2px;text-align:center;width:${iW+20}px">${widthArrow}</div>
+              <!-- Height arrow + image side by side -->
+              <div style="display:flex;align-items:stretch;gap:0">
+                <!-- Height dim column — single or multi-section -->
+                ${(()=>{
+                  const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
+                  if(rawSec.length>=2){
+                    // Multi-section: draw stacked segments proportionally
+                    const total=rawSec.reduce((a,b)=>a+b,0)||OH;
+                    const segs=rawSec.map(h=>({h,px:Math.round(iH*h/total)}));
+                    let html=`<div style="display:flex;flex-direction:column;width:20px;align-items:center">`;
+                    html+=`<span style="color:#cc0000;font-size:10px;line-height:1;font-family:Arial">↑</span>`;
+                    segs.forEach((seg,si)=>{
+                      html+=`<div style="flex:0 0 ${seg.px}px;display:flex;align-items:center;justify-content:center;position:relative">`;
+                      html+=`<div style="position:absolute;left:8px;top:0;bottom:0;width:1px;background:#cc0000"></div>`;
+                      html+=`<span style="color:#cc0000;font-size:9px;font-weight:700;writing-mode:vertical-rl;transform:rotate(180deg);font-family:Arial;z-index:1">${seg.h}</span>`;
+                      html+=`</div>`;
+                      if(si<segs.length-1) html+=`<span style="color:#cc0000;font-size:8px;line-height:1;font-family:Arial">✕</span>`;
+                    });
+                    html+=`<span style="color:#cc0000;font-size:10px;line-height:1;font-family:Arial">↓</span>`;
+                    html+=`</div>`;
+                    return html;
+                  } else {
+                    return `<div style="display:flex;flex-direction:column;justify-content:space-between;align-items:center;width:20px;padding:2px 0">
+                      <span style="color:#cc0000;font-size:11px;line-height:1;font-family:Arial">↑</span>
+                      <span style="color:#cc0000;font-size:10px;font-weight:700;writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0;font-family:Arial">${hMm}</span>
+                      <span style="color:#cc0000;font-size:11px;line-height:1;font-family:Arial">↓</span>
+                    </div>`;
+                  }
+                })()}
+                <!-- Image -->
+                <div>${picHtml}</div>
+              </div>
+              <!-- Viewed from Inside -->
+              <div style="padding-left:20px;margin-top:4px;font-size:9px;color:#cc0000;font-style:italic;font-weight:600;font-family:Arial">Viewed from Inside</div>
             </div>
-            <div style="font-size:10px;color:#222;line-height:1.75;flex:1;padding-top:2px">
-              ${w.series?`<div style="color:#222"><b>${esc(w.series)}</b></div>`:''}
-              ${w.finish?`<div style="color:#444">${esc(w.finish)}</div>`:''}
-              ${w.netting?`<div style="color:#444">Net: ${esc(w.netting)}</div>`:''}
-              ${w.glassOuterThk?`<div style="color:#444">${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU</div>`:w.glassThk?`<div style="color:#444">${esc(w.glazing||'Single')} ${esc(w.glassThk)}</div>`:''}
+            <!-- Right: details text — all explicitly black -->
+            <div style="font-size:10px;color:#000;line-height:1.7;flex:1;padding-top:2px;font-family:Arial">
+              ${w.category?`<div style="color:#000">${esc(w.category)}</div>`:''}
+              ${w.series?`<div style="color:#000">${esc(w.series)}</div>`:''}
+              ${w.finish?`<div style="color:#000">${esc(w.finish)}</div>`:''}
+              ${w.netting?`<div style="color:#000">Net: ${esc(w.netting)}</div>`:''}
+              ${w.glassOuterThk?`<div style="color:#000"><b>${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU</b></div>`:w.glassThk?`<div style="color:#000"><b>${esc(w.glazing||'Single')} ${esc(w.glassThk)}</b></div>`:''}
             </div>
           </div>
         </td>`;
