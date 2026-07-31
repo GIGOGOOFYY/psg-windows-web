@@ -324,7 +324,15 @@ const THERMAL_SERIES=new Set(['URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'])
 function stockOptions(series){ return THERMAL_SERIES.has(series)?[18]:STOCK_FT; }
 function rateSeries(s){ return SERIES_ALIAS[s]||s; }
 function accRate(name){ const a=DB.rates.accessories[name]; return a?num(a.rate):0; }
-function sysParts(series){ return DB.rates.systems[rateSeries(series)]||[]; }
+function sysParts(series){
+  const rs=rateSeries(series);
+  const db=DB.rates.systems[rs]||[];
+  const seed=SEED.systems[rs]||[];
+  // merge: add any SEED parts not yet in user's DB (new parts added after last sync)
+  const dbKeys=new Set(db.map(p=>p.part+'|'+p.section+'|'+p.width));
+  const extra=seed.filter(p=>!dbKeys.has(p.part+'|'+p.section+'|'+p.width));
+  return extra.length?[...db,...extra]:db;
+}
 function hasSection(series,sec){ return sysParts(series).some(p=>p.section===sec); }
 function getGlaze(series,part,section,width){
   // glaze tags live in SEED (source of truth), not in user's DB copy
