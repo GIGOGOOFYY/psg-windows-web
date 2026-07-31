@@ -871,14 +871,30 @@ function renderCatalogue(){
         <button class="ghost sm danger" onclick="deleteCatalogueItem('${c.code}')" title="Delete">✕</button>
       </div></div>`).join('')}</div>`).join('');
 }
+function genCatalogueCode(){
+  // Generate unique PSG-XXX-NNNNN code not already in catalogue
+  const existing=new Set(DB.rates.catalogue.map(c=>c.code));
+  let code; do {
+    const alpha=Array.from({length:3},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*23)]).join('');
+    const num5=Math.floor(Math.random()*90000+10000);
+    code='PSG-'+alpha+'-'+num5;
+  } while(existing.has(code));
+  return code;
+}
 function openAddCatalogueItem(editCode){
   const existing=editCode?DB.rates.catalogue.find(x=>x.code===editCode):null;
   const allCats=[...new Set([...DB.rates.catalogue.map(c=>c.category),'Casement','Fixed','Sliding','Awning','Door'])];
+  const autoCode=editCode?(existing?existing.code:''):genCatalogueCode();
   showModal(`<div class="hd"><h3>${editCode?'Edit':'Add'} Window Type</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
    <div class="bd" style="display:flex;flex-direction:column;gap:12px">
      <div class="f2">
-       <div><label style="font-size:12px;font-weight:600">Code / ID</label>
-         <input id="ncCode" placeholder="e.g. PSG-ABC-12345" value="${existing?existing.code:''}" style="width:100%;margin-top:4px" ${editCode?'readonly':''}></div>
+       <div>
+         <label style="font-size:12px;font-weight:600">Code / ID <span style="font-weight:400;color:#888">(auto-generated)</span></label>
+         <div style="display:flex;gap:6px;margin-top:4px">
+           <input id="ncCode" value="${autoCode}" style="flex:1;font-family:monospace" ${editCode?'readonly':''}>
+           ${editCode?'':'<button class="sm ghost" type="button" onclick="document.getElementById(\'ncCode\').value=genCatalogueCode()" style="white-space:nowrap">↺ New</button>'}
+         </div>
+       </div>
        <div><label style="font-size:12px;font-weight:600">Category</label>
          <input id="ncCat" list="ncCatList" placeholder="Casement" value="${existing?existing.category:''}" style="width:100%;margin-top:4px">
          <datalist id="ncCatList">${allCats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist></div>
@@ -886,10 +902,25 @@ function openAddCatalogueItem(editCode){
      <div class="f2">
        <div><label style="font-size:12px;font-weight:600">Window Type</label>
          <select id="ncWtype" style="width:100%;margin-top:4px">
-           ${['casement','sliding','fixed','awning'].map(t=>`<option value="${t}" ${existing&&existing.wtype===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
+           ${['casement','sliding','fixed','awning','lift-slide','door'].map(t=>`<option value="${t}" ${existing&&existing.wtype===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
          </select></div>
        <div><label style="font-size:12px;font-weight:600">Handle Qty</label>
          <input id="ncHq" type="number" min="0" max="10" value="${existing?existing.handleQty:1}" style="width:100%;margin-top:4px"></div>
+     </div>
+     <div class="f2">
+       <div><label style="font-size:12px;font-weight:600">Shutter Qty</label>
+         <input id="ncSq" type="number" min="0" max="20" value="${existing?existing.shutterQty||1:1}" style="width:100%;margin-top:4px" placeholder="e.g. 2"></div>
+       <div><label style="font-size:12px;font-weight:600">Divider Qty</label>
+         <input id="ncDq" type="number" min="0" max="20" value="${existing?existing.dividerQty||0:0}" style="width:100%;margin-top:4px" placeholder="0 = none"></div>
+     </div>
+     <div class="f2">
+       <div><label style="font-size:12px;font-weight:600">Divider Direction</label>
+         <select id="ncDdir" style="width:100%;margin-top:4px">
+           ${['none','horizontal','vertical','both'].map(d=>`<option value="${d}" ${existing&&(existing.dividerDir||'none')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+         </select></div>
+       <div><label style="font-size:12px;font-weight:600">&nbsp;</label>
+         <div style="margin-top:4px;font-size:11px;color:#888;padding-top:8px">Horizontal = across width<br>Vertical = along height</div>
+       </div>
      </div>
      <div><label style="font-size:12px;font-weight:600">Image (optional — upload a window drawing PNG/SVG)</label>
        <input id="ncImgFile" type="file" accept="image/*,.svg" style="margin-top:4px" onchange="previewCatImg(this)">
@@ -916,16 +947,19 @@ function saveCatalogueItem(editCode){
   const cat=(document.getElementById('ncCat').value||'').trim();
   const wtype=document.getElementById('ncWtype').value;
   const hq=num(document.getElementById('ncHq').value)||1;
+  const sq=num(document.getElementById('ncSq').value)||1;
+  const dq=num(document.getElementById('ncDq').value)||0;
+  const ddir=document.getElementById('ncDdir').value;
   const img=document.getElementById('ncImgData').value||'';
   if(!code||!cat){toast('Code and category are required');return;}
-  if(!editCode && DB.rates.catalogue.find(c=>c.code===code)){toast('Code already exists');return;}
+  if(!editCode && DB.rates.catalogue.find(c=>c.code===code)){toast('Code already exists — click ↺ New to generate another');return;}
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir};
+  if(img) entry.img=img;
   if(editCode){
     const idx=DB.rates.catalogue.findIndex(c=>c.code===editCode);
-    if(idx>=0){DB.rates.catalogue[idx]={...DB.rates.catalogue[idx],category:cat,wtype,handleQty:hq,...(img?{img}:{})};}
+    if(idx>=0) DB.rates.catalogue[idx]={...DB.rates.catalogue[idx],...entry};
   } else {
-    // Auto-generate code if generic
-    const finalCode=code||('PSG-'+Math.random().toString(36).slice(2,5).toUpperCase()+'-'+Math.floor(Math.random()*90000+10000));
-    DB.rates.catalogue.push({code:finalCode,category:cat,wtype,handleQty:hq,...(img?{img}:{})});
+    DB.rates.catalogue.push({code,...entry});
   }
   save(); closeModal(); renderCatalogue(); toast(editCode?'Updated':'Added to catalogue');
 }
