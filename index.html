@@ -436,6 +436,14 @@ function calcWindow(w){
   addHw('Labor',area,accRate('Labor'),'Sft');
   addHw('Silicon',1,accRate('Silicon'),'pc');
   if(wtype!=='fixed' && wtype!=='sliding') addHw('Window Hardware',area,accRate('Window hardware'),'Sft');
+  // ---- auto-apply accessories (user-configured via Rates panel) ----
+  Object.entries(DB.rates.accessories).forEach(([name,acc])=>{
+    const at=acc.applyTo||'—'; const qt=acc.qtyType||'—';
+    if(at==='—'||qt==='—') return;
+    if(at!=='All' && at.toLowerCase()!==wtype) return;
+    const q=qt==='per Sft'?area:qt==='per Rft perim'?2*(OH+OW):1;
+    if(q>0) addHw(name,q,num(acc.rate),acc.unit||'pc');
+  });
   // glass panes + spacer (priced from glass rate table, by type + thickness)
   const dblG=w.glazing==='Double', hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
   if(hasGlass){ const gA=glassOf(w);
@@ -1039,20 +1047,32 @@ function renderRates(){
     <div class="muted">Edit any rate — saves automatically and drives all quotes.</div>
     <button class="ghost sm danger" onclick="if(confirm('Reset ALL rates to workbook defaults?')){resetRates();renderRates();}">Reset to defaults</button></div>
    <div class="card" style="margin-bottom:16px"><div class="hd"><b>Accessories & Hardware</b><button class="sm" onclick="addAccessory()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto">
-     <table><thead><tr><th>Item</th><th>Category</th><th>Unit</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
+     <table><thead><tr><th>Item</th><th>Category</th><th>Unit</th><th class="right">Rate (Rs)</th><th>Apply To</th><th>Qty Type</th><th></th></tr></thead><tbody>
      ${Object.entries(DB.rates.accessories).map(([k,v])=>`<tr>
-       <td><input style="max-width:160px" value="${esc(k)}" onchange="renameAcc('${jsq(k)}',this.value)"></td>
-       <td class="muted"><input style="max-width:120px" value="${esc(v.category||'')}" onchange="DB.rates.accessories['${jsq(k)}'].category=this.value;save()"></td>
-       <td><select style="max-width:80px" onchange="DB.rates.accessories['${jsq(k)}'].unit=this.value;save()">
+       <td><input style="max-width:140px" value="${esc(k)}" onchange="renameAcc('${jsq(k)}',this.value)"></td>
+       <td class="muted"><input style="max-width:100px" value="${esc(v.category||'')}" onchange="DB.rates.accessories['${jsq(k)}'].category=this.value;save()"></td>
+       <td><select style="max-width:70px" onchange="DB.rates.accessories['${jsq(k)}'].unit=this.value;save()">
          ${['pc','rft','Sft','kg'].map(u=>`<option ${(v.unit||'pc')===u?'selected':''}>${u}</option>`).join('')}</select></td>
-       <td class="right"><input style="max-width:120px;text-align:right" type="number" value="${v.rate}" onchange="DB.rates.accessories['${jsq(k)}'].rate=num(this.value);save();toast('Saved')"></td>
+       <td class="right"><input style="max-width:100px;text-align:right" type="number" value="${v.rate}" onchange="DB.rates.accessories['${jsq(k)}'].rate=num(this.value);save();toast('Saved')"></td>
+       <td><select style="max-width:90px" onchange="DB.rates.accessories['${jsq(k)}'].applyTo=this.value;save()">
+         ${['—','All','Casement','Sliding','Fixed','Awning'].map(t=>`<option ${(v.applyTo||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
+       <td><select style="max-width:100px" onchange="DB.rates.accessories['${jsq(k)}'].qtyType=this.value;save()">
+         ${['—','× 1 pc','per Sft','per Rft perim'].map(t=>`<option ${(v.qtyType||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
      </tbody></table></div></div>
    <div class="f2">
-     <div class="card"><div class="hd"><b>Handles</b></div><div class="bd" style="padding:0"><table><tbody>
-       ${Object.entries(DB.rates.handles).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="right"><input style="max-width:110px;text-align:right" type="number" value="${v}" onchange="DB.rates.handles['${jsq(k)}']=num(this.value);save();toast('Saved')"></td></tr>`).join('')}</tbody></table></div></div>
-     <div class="card"><div class="hd"><b>Hinges</b></div><div class="bd" style="padding:0"><table><tbody>
-       ${Object.entries(DB.rates.hinges).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="right"><input style="max-width:110px;text-align:right" type="number" value="${v}" onchange="DB.rates.hinges['${jsq(k)}']=num(this.value);save();toast('Saved')"></td></tr>`).join('')}</tbody></table></div></div></div>
+     <div class="card"><div class="hd"><b>Handles</b><button class="sm" onclick="addHandle()">+ Add</button></div><div class="bd" style="padding:0"><table><tbody>
+       ${Object.entries(DB.rates.handles).map(([k,v])=>`<tr>
+         <td><input style="max-width:130px" value="${esc(k)}" onchange="renameHandle('${jsq(k)}',this.value)"></td>
+         <td class="right"><input style="max-width:100px;text-align:right" type="number" value="${v}" onchange="DB.rates.handles['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
+         <td><button class="ghost sm danger" onclick="delHandle('${jsq(k)}')">✕</button></td></tr>`).join('')}
+     </tbody></table></div></div>
+     <div class="card"><div class="hd"><b>Hinges</b><button class="sm" onclick="addHinge()">+ Add</button></div><div class="bd" style="padding:0"><table><tbody>
+       ${Object.entries(DB.rates.hinges).map(([k,v])=>`<tr>
+         <td><input style="max-width:130px" value="${esc(k)}" onchange="renameHinge('${jsq(k)}',this.value)"></td>
+         <td class="right"><input style="max-width:100px;text-align:right" type="number" value="${v}" onchange="DB.rates.hinges['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
+         <td><button class="ghost sm danger" onclick="delHinge('${jsq(k)}')">✕</button></td></tr>`).join('')}
+     </tbody></table></div></div></div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Handle Accessories</b>
        <select id="haHandleSel" onchange="renderHandleAccTable()">${Object.keys(DB.rates.handles).map(k=>`<option>${k}</option>`).join('')}</select>
@@ -1133,9 +1153,15 @@ function addSlideHWItem(){
 }
 function addGlass(){ DB.rates.glass.push({name:'New glass',cat:'Solar Control',thickness:'',rate:0}); save(); renderRates(); }
 function addSpacer(){ DB.rates.spacers.push({size:'New',rate:0}); save(); renderRates(); }
-function addAccessory(){ const n='New Accessory '+Date.now().toString().slice(-4); DB.rates.accessories[n]={category:'Hardware',unit:'pc',rate:0}; save(); renderRates(); }
+function addAccessory(){ const n='New Accessory '+Date.now().toString().slice(-4); DB.rates.accessories[n]={category:'Hardware',unit:'pc',rate:0,applyTo:'—',qtyType:'—'}; save(); renderRates(); }
 function delAcc(k){ if(!confirm('Remove "'+k+'" from accessories?'))return; delete DB.rates.accessories[k]; save(); renderRates(); }
 function renameAcc(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.accessories[oldKey]; delete DB.rates.accessories[oldKey]; DB.rates.accessories[newKey]=v; save(); }
+function addHandle(){ const n='New Handle '+Date.now().toString().slice(-4); DB.rates.handles[n]=0; save(); renderRates(); }
+function delHandle(k){ if(!confirm('Remove handle "'+k+'"?'))return; delete DB.rates.handles[k]; save(); renderRates(); }
+function renameHandle(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.handles[oldKey]; delete DB.rates.handles[oldKey]; DB.rates.handles[newKey]=v; save(); }
+function addHinge(){ const n='New Hinge '+Date.now().toString().slice(-4); DB.rates.hinges[n]=0; save(); renderRates(); }
+function delHinge(k){ if(!confirm('Remove hinge "'+k+'"?'))return; delete DB.rates.hinges[k]; save(); renderRates(); }
+function renameHinge(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.hinges[oldKey]; delete DB.rates.hinges[oldKey]; DB.rates.hinges[newKey]=v; save(); }
 function renderHandleAccTable(){
   const h=document.getElementById('haHandleSel'); if(!h) return;
   const handle=h.value; if(!handle) return;
