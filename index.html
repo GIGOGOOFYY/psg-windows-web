@@ -995,7 +995,23 @@ function openCataloguePicker(){ showModal(`<div class="hd"><h3>Add window from c
      <div class="ph">${c.img?`<img src="${c.img}">`:'🪟'}</div><div class="cap"><b>${c.code}</b><div class="muted" style="font-size:11px">${c.category}</div></div></div>`).join('')}</div></div>`); }
 
 /* ---------- Rates ---------- */
+function syncSeedParts(){
+  // Add any SEED parts not yet in user's DB so they appear in Rates and can be priced
+  let changed=false;
+  Object.entries(SEED.systems).forEach(([sys,seedParts])=>{
+    if(!DB.rates.systems[sys]) return;
+    const dbKeys=new Set(DB.rates.systems[sys].map(p=>p.part+'|'+p.section+'|'+p.width));
+    seedParts.forEach(sp=>{
+      if(!dbKeys.has(sp.part+'|'+sp.section+'|'+sp.width)){
+        DB.rates.systems[sys].push({part:sp.part,width:sp.width,section:sp.section,rates:{}});
+        changed=true;
+      }
+    });
+  });
+  if(changed) save();
+}
 function renderRates(){
+  syncSeedParts();
   const sysNames=Object.keys(DB.rates.systems);
   C().innerHTML=`<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
     <div class="muted">Edit any rate — saves automatically and drives all quotes.</div>
