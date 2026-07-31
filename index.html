@@ -326,17 +326,22 @@ function rateSeries(s){ return SERIES_ALIAS[s]||s; }
 function accRate(name){ const a=DB.rates.accessories[name]; return a?num(a.rate):0; }
 function sysParts(series){ return DB.rates.systems[rateSeries(series)]||[]; }
 function hasSection(series,sec){ return sysParts(series).some(p=>p.section===sec); }
+function getGlaze(series,part,section,width){
+  // glaze tags live in SEED (source of truth), not in user's DB copy
+  const sp=(SEED.systems[rateSeries(series)]||[]).find(p=>p.part===part&&p.section===section&&p.width===width);
+  return sp?sp.glaze||null:null;
+}
 function partsFor(series,section,widthPref,glazing){
   let parts=sysParts(series).filter(p=>p.section===section);
   if(!parts.length) return [];
   if(widthPref){ const m=parts.filter(p=>String(p.width)===String(widthPref)); if(m.length) parts=m; }
-  const hasTags=parts.some(p=>p.glaze);
+  const hasTags=parts.some(p=>getGlaze(series,p.part,p.section,p.width));
   if(hasTags && glazing){
     const tag=glazing==='Double'?'dg':'sg';
-    const tagged=parts.filter(p=>p.glaze===tag);
+    const tagged=parts.filter(p=>getGlaze(series,p.part,p.section,p.width)===tag);
     if(tagged.length) return tagged;
   }
-  if(hasTags) return parts.filter(p=>!p.glaze).length?parts.filter(p=>!p.glaze):parts;
+  if(hasTags) return parts.filter(p=>!getGlaze(series,p.part,p.section,p.width));
   return parts;
 }
 function pickPart(series,section,widthPref,pickedName,glazing){
