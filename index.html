@@ -360,20 +360,20 @@ function calcWindow(w){
 
   if(wtype==='sliding'){
     const nSh=num(w.nShutters)||2;
-    if(hasSection(series,'Outer')) addSec('Outer Section','Outer',per_open);
+    // Outer Section not used for sliding windows
     ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,OW); });
     if(hasSection(series,'Outer Height')) addSec('Outer Height Section','Outer Height',2*OH);
     ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,SW*nSh); });
     if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',2*SH*nSh);
     if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',SH*nSh);
-    if(hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
+    if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',per_open);
   } else {
     // per-design formulas from the workbook design sheet
     const ds=designSections(w,series); dsSec=ds;
     addSec('Outside Section','Outer',ds.outer);
     addSec('Divider Section','Divider',ds.divider);
-    addSec('Bidding Section','Bidding',ds.bidding);
+    if(wtype!=='sliding') addSec('Bidding Section','Bidding',ds.bidding);
     addSec('Netting Section','Net',ds.netting);
     addSec('Shutter Section','Shutter',ds.shutter);
   }
@@ -448,7 +448,7 @@ function prodGroups(w){
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
     const cut=(len,cnt)=>({len:rup(len*FT_MM)-ded,cnt:cnt*qty});
-    if(hasSection(series,'Outer')) g('Outer',partOf('Outer'),[cut(OH,2),cut(OW,2)]);
+    // Outer Section not used for sliding windows
     if(hasSection(series,'Outer Bottom')) g('Outer Bottom',partOf('Outer Bottom'),[cut(OW,1)]);
     if(hasSection(series,'Outer Top')) g('Outer Top',partOf('Outer Top'),[cut(OW,1)]);
     if(hasSection(series,'Outer Height')) g('Outer Height',partOf('Outer Height'),[cut(OH,2)]);
@@ -456,7 +456,7 @@ function prodGroups(w){
     if(hasSection(series,'Shutter Top')) g('Shutter Top',partOf('Shutter Top'),[cut(SW,nSh)]);
     if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[cut(SH,2*nSh)]);
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:nSh*qty}]);
-    if(hasSection(series,'Bidding')) g('Bidding',partOf('Bidding'),[cut(OH,2),cut(OW,2)]);
+    if(wtype!=='sliding' && hasSection(series,'Bidding')) g('Bidding',partOf('Bidding'),[cut(OH,2),cut(OW,2)]);
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
   } else {
     const {g:gv,des}=resolveG(w,series);
@@ -1274,11 +1274,10 @@ function doPrint(id,mode){
         const wtype=w.wtype||'casement';
         const isTwoPanelW=(wtype==='sliding'||wtype==='lift-slide')&&SW<OW*0.9;
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
-        // Scale image: max 90w × 115h
-        const aspect=OH/OW; let iW=90,iH=Math.round(90*aspect);
-        if(iH>115){iH=115;iW=Math.round(115/aspect);}
+        // Fixed image box: always 90×115px
+        const iW=90,iH=115;
         const picHtml=cat&&cat.img
-          ?`<img src="${cat.img}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #bbb">`
+          ?`<img src="${cat.img}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #bbb;background:#f8f8f8">`
           :winDiagramSVG(w,iW,iH);
         const idx=ws.indexOf(w);
         const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
