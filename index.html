@@ -427,9 +427,9 @@ function calcWindow(w){
     addSec('Shutter Section','Shutter',ds.shutter);
     // ---- multi-segment fixed: internal mullions & transoms ----
     if(wtype==='fixed'){
-      const fCols=Math.max(1,num(w.fCols)||1), fRows=Math.max(1,num(w.fRows)||1);
-      if(fCols>1) addSec('Mullion Section (vertical)','Divider',(fCols-1)*OH);
-      if(fRows>1) addSec('Transom Section (horizontal)','Divider',(fRows-1)*OW);
+      const fCols=Math.max(0,num(w.fCols)||0), fRows=Math.max(0,num(w.fRows)||0);
+      if(fCols>0) addSec('Mullion Section (vertical)','Divider',fCols*OH);
+      if(fRows>0) addSec('Transom Section (horizontal)','Divider',fRows*OW);
     }
   }
   const aluminium=sec.reduce((s,x)=>s+x.amount,0);
@@ -759,9 +759,9 @@ function winFormHTML(w,r){
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
    ${isFixed?`<div class="f4" style="margin-top:4px">
-     <div class="field"><label>Columns (vertical splits)</label><input data-k="fCols" type="number" step="1" min="1" value="${w.fCols||1}" ${bind}></div>
-     <div class="field"><label>Rows (horizontal splits)</label><input data-k="fRows" type="number" step="1" min="1" value="${w.fRows||1}" ${bind}></div>
-     <div class="muted f-col" style="align-self:center;font-size:12px;grid-column:span 2">Adds internal mullions &amp; transoms to aluminium sections</div>
+     <div class="field"><label>Mullions (vertical dividers)</label><input data-k="fCols" type="number" step="1" min="0" value="${w.fCols||0}" ${bind}></div>
+     <div class="field"><label>Transoms (horizontal dividers)</label><input data-k="fRows" type="number" step="1" min="0" value="${w.fRows||0}" ${bind}></div>
+     <div class="muted f-col" style="align-self:center;font-size:12px;grid-column:span 2">Enter count of internal mullions / transoms</div>
    </div>`:''}
    ${isFixed?'':`
    <div class="f4">
