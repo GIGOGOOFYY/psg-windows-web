@@ -425,6 +425,12 @@ function calcWindow(w){
     if(wtype!=='sliding') addSec('Bidding Section','Bidding',ds.bidding);
     addSec('Netting Section','Net',ds.netting);
     addSec('Shutter Section','Shutter',ds.shutter);
+    // ---- multi-segment fixed: internal mullions & transoms ----
+    if(wtype==='fixed'){
+      const fCols=Math.max(1,num(w.fCols)||1), fRows=Math.max(1,num(w.fRows)||1);
+      if(fCols>1) addSec('Mullion Section (vertical)','Divider',(fCols-1)*OH);
+      if(fRows>1) addSec('Transom Section (horizontal)','Divider',(fRows-1)*OW);
+    }
   }
   const aluminium=sec.reduce((s,x)=>s+x.amount,0);
 
@@ -752,6 +758,11 @@ function winFormHTML(w,r){
      ${design.inputs.map(i=>{ const valFt=(w.dim||{})[i.n]??i.def; const valMm=valFt===''?'':(Math.round(num(valFt)*304.8)||''); return `<div class="field"><label>${esc(i.label)} (mm)</label><input data-k="dim_${i.n}" type="number" step="1" value="${valMm}" ${bind} data-mm="1"></div>`; }).join('')}
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
+   ${isFixed?`<div class="f4" style="margin-top:4px">
+     <div class="field"><label>Columns (vertical splits)</label><input data-k="fCols" type="number" step="1" min="1" value="${w.fCols||1}" ${bind}></div>
+     <div class="field"><label>Rows (horizontal splits)</label><input data-k="fRows" type="number" step="1" min="1" value="${w.fRows||1}" ${bind}></div>
+     <div class="muted f-col" style="align-self:center;font-size:12px;grid-column:span 2">Adds internal mullions &amp; transoms to aluminium sections</div>
+   </div>`:''}
    ${isFixed?'':`
    <div class="f4">
      <div class="field"><label>Lock type</label><select data-k="lockType" ${bind}>${optBlank(locks,w.lockType)}</select></div>
