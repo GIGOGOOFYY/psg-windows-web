@@ -338,7 +338,9 @@ function designSections(w,series){ const {des,g}=resolveG(w,series);
   const outer = des.outer ? evalExpr(des.outer,g,series) : ((w.wtype||'casement')==='fixed'?2*(num(g[4])+num(g[5])):0);
   return {g,des,outer,divider:evalExpr(des.divider,g,series),
     bidding:evalExpr(des.bidding,g,series),netting:evalExpr(des.netting,g,series),shutter:evalExpr(des.shutter,g,series)}; }
-function dimsOf(w){ const {g}=resolveG(w,w.series); return {g,OH:num(g[4]),OW:num(g[5]),SH:num(g[6])||num(g[4]),SW:num(g[7])||num(g[5])}; }
+function dimsOf(w){ const {g}=resolveG(w,w.series); const OH=num(g[4]),OW=num(g[5]);
+  if((w.wtype||'casement')==='sliding'){ const nSh=Math.max(1,num(w.nShutters)||2); return {g,OH,OW,SH:OH,SW:OW/nSh}; }
+  return {g,OH,OW,SH:num(g[6])||OH,SW:num(g[7])||OW}; }
 /* linear-coefficient decomposition of a section formula → cut pieces [{len(ft),cnt}] */
 function sectionPieces(expr,g,series){ if(!expr) return []; const base=evalExpr(expr,g,series), out=[];
   for(let n=4;n<=11;n++){ if(g[n]===undefined) continue; const g2=g.slice(); g2[n]=(g[n]||0)+1;
@@ -394,7 +396,10 @@ function calcWindow(w){
   const wtype=w.wtype||'casement';
   const finish=w.finish||'Natural', series=w.series;
   const {g}=resolveG(w,series);
-  const OH=num(g[4]), OW=num(g[5]), SH=num(g[6])||OH, SW=num(g[7])||OW;
+  const OH=num(g[4]), OW=num(g[5]);
+  const _nShCalc=Math.max(1,num(w.nShutters)||2);
+  const SH=(wtype==='sliding')?OH:(num(g[6])||OH);
+  const SW=(wtype==='sliding')?OW/_nShCalc:(num(g[7])||OW);
   const area=OH*OW, per_open=2*(OH+OW), per_shut=2*(SH+SW);
   const sec=[]; let dsSec={outer:0,divider:0,bidding:0,netting:0,shutter:0};
   const picks=w.picks||{};
@@ -415,7 +420,8 @@ function calcWindow(w){
     ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,SW*nSh); });
     if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',SH*nSh);
     const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const ilMult=(_catEntry&&_catEntry.interlockDouble)||series==='BOX_SLIDING'?2:1;
+    const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948'||series==='BOX_SLIDING';
+    const ilMult=_ilDouble?2:1;
     if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',per_open);
@@ -532,7 +538,8 @@ function prodGroups(w){
     if(hasSection(series,'Shutter Top')) g('Shutter Top',partOf('Shutter Top'),[cut(SW,nSh)]);
     if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[cut(SH,nSh)]);
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const _ilMult=(_catE&&_catE.interlockDouble)||series==='BOX_SLIDING'?2:1;
+    const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948'||series==='BOX_SLIDING';
+    const _ilMult=_ilDbl?2:1;
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
   } else {
@@ -758,7 +765,12 @@ function winFormHTML(w,r){
      ${isSlide?`<div class="field"><label># Shutters</label><input data-k="nShutters" type="number" step="1" value="${w.nShutters??2}" ${bind}></div>`:'<div></div>'}
    </div>
    <div class="f4">
-     ${design.inputs.map(i=>{ const valFt=(w.dim||{})[i.n]??i.def; const valMm=valFt===''?'':(Math.round(num(valFt)*304.8)||''); return `<div class="field"><label>${esc(i.label)} (mm)</label><input data-k="dim_${i.n}" type="number" step="1" value="${valMm}" ${bind} data-mm="1"></div>`; }).join('')}
+     ${design.inputs.map(i=>{
+       // For sliding windows, auto-compute SH(g6) and SW(g7) — hide manual entry
+       if(isSlide && i.n===6){ const ohMm=Math.round(num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)*304.8)||0; return `<div class="field"><label>Shutter Height (mm) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${ohMm}" disabled></div>`; }
+       if(isSlide && i.n===7){ const owMm=Math.round(num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)*304.8)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (mm) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${Math.round(owMm/nsh)}" disabled></div>`; }
+       const valFt=(w.dim||{})[i.n]??i.def; const valMm=valFt===''?'':(Math.round(num(valFt)*304.8)||''); return `<div class="field"><label>${esc(i.label)} (mm)</label><input data-k="dim_${i.n}" type="number" step="1" value="${valMm}" ${bind} data-mm="1"></div>`;
+     }).join('')}
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
    ${isFixed?`<div class="f4" style="margin-top:4px">
