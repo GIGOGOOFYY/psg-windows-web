@@ -534,7 +534,6 @@ function prodGroups(w){
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilMult=(_catE&&_catE.interlockDouble)||series==='BOX_SLIDING'?2:1;
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
-    if(wtype!=='sliding' && hasSection(series,'Bidding')) g('Bidding',partOf('Bidding'),[cut(OH,2),cut(OW,2)]);
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
   } else {
     const {g:gv,des}=resolveG(w,series);
