@@ -413,8 +413,9 @@ function calcWindow(w){
     ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,OW); });
     if(hasSection(series,'Outer Height')) addSec('Outer Height Section','Outer Height',2*OH);
     ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,SW*nSh); });
-    if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',2*SH*nSh);
-    if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',SH*nSh);
+    const shutHMult=series==='BOX_SLIDING'?1:2;
+    if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',shutHMult*SH*nSh);
+    if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',2*SH*nSh);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',per_open);
   } else {
@@ -528,8 +529,9 @@ function prodGroups(w){
     if(hasSection(series,'Outer Height')) g('Outer Height',partOf('Outer Height'),[cut(OH,2)]);
     if(hasSection(series,'Shutter Bottom')) g('Shutter Bottom',partOf('Shutter Bottom'),[cut(SW,nSh)]);
     if(hasSection(series,'Shutter Top')) g('Shutter Top',partOf('Shutter Top'),[cut(SW,nSh)]);
-    if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[cut(SH,2*nSh)]);
-    if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:nSh*qty}]);
+    const _shutHMult=series==='BOX_SLIDING'?1:2;
+    if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[cut(SH,_shutHMult*nSh)]);
+    if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:2*nSh*qty}]);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) g('Bidding',partOf('Bidding'),[cut(OH,2),cut(OW,2)]);
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
   } else {
@@ -829,7 +831,7 @@ function addWindow(code){
   const series=(seriesFor(wt,'NO')[1]||seriesFor(wt,'NO')[0]||'');
   const des=(code&&SEED.designs[code])||SEED.defaultDesign; const dim={}; des.inputs.forEach(i=>dim[i.n]=i.def);
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
-    series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:2,qty:1,
+    series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
     hinge:'',netting:'',glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
