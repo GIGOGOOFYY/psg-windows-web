@@ -1857,7 +1857,9 @@ function catImg(code, cat) {
 }
 /* catImg for PDF/print: never returns GIF (use static cat.img only) */
 function catImgStatic(code, cat) {
-  return (cat&&cat.img) || '';
+  const img=(cat&&cat.img)||'';
+  if(img.startsWith('data:image/gif')) return '';
+  return img;
 }
 </script>
 </body>
