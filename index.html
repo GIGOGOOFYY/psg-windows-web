@@ -1042,20 +1042,17 @@ function deleteCatalogueItem(code){
 }
 function previewCatImg(inp){
   if(!inp.files[0]) return;
-  const file=inp.files[0];
-  const MAX=600*1024; // 600KB limit for PDF image
-  if(file.size>MAX){toast('PDF image too large (max 600 KB). Please resize and try again.');inp.value='';return;}
   const reader=new FileReader();
   reader.onload=e=>{document.getElementById('ncImgData').value=e.target.result;
     document.getElementById('ncImgPreview').innerHTML=`<img src="${e.target.result}" style="max-height:100px;border:1px solid var(--line)">`;};
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(inp.files[0]);
 }
 function previewCatGif(inp){
   if(!inp.files[0]) return;
   const file=inp.files[0];
-  const MAX=800*1024; // 800KB limit for GIF
+  const MAX=2*1024*1024; // 2MB limit for GIF
   if(file.size>MAX){
-    toast('GIF too large (max 800 KB). Tip: reduce size/resolution in Canva or ezgif.com before uploading.');
+    toast('GIF too large (max 2 MB). Tip: reduce size/resolution at ezgif.com → Optimize before uploading.');
     inp.value=''; return;
   }
   const reader=new FileReader();
