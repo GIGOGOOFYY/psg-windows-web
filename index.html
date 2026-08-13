@@ -261,8 +261,25 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(!s.rates.glass) s.rates.glass=structuredClone(SEED.glass||[]);
   if(!s.rates.spacers) s.rates.spacers=structuredClone(SEED.spacers||[]);
   if(!s.rates.handleAccessories) s.rates.handleAccessories=structuredClone(HANDLE_ACC_DEFAULT);
+  /* re-attach catalogue images from separate localStorage keys */
+  if(s.rates&&s.rates.catalogue){
+    s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
+  }
   return s; }
-function save(){ localStorage.setItem(LS_KEY,JSON.stringify(DB)); }
+function saveCatImages(code,gif,img){
+  try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
+  try{ if(img) localStorage.setItem('psg_cat_img_'+code,img); else localStorage.removeItem('psg_cat_img_'+code); }catch(e){}
+}
+function loadCatImages(code){ return { gif:localStorage.getItem('psg_cat_gif_'+code)||'', img:localStorage.getItem('psg_cat_img_'+code)||'' }; }
+function save(){
+  /* strip large image data from catalogue before serialising to avoid quota errors */
+  const dbCopy=JSON.parse(JSON.stringify(DB));
+  if(dbCopy.rates&&dbCopy.rates.catalogue){
+    dbCopy.rates.catalogue=dbCopy.rates.catalogue.map(c=>{ const e={...c}; delete e.gif; delete e.img; return e; });
+  }
+  try{ localStorage.setItem(LS_KEY,JSON.stringify(dbCopy)); }
+  catch(e){ toast('⚠ Save failed — browser storage full. Try clearing old data.','error'); console.error('save() quota error',e); }
+}
 
 /* device id + session */
 function deviceId(){ let d=localStorage.getItem('psg_device_id'); if(!d){ d='DEV-'+Math.random().toString(36).slice(2,10).toUpperCase()+'-'+Date.now().toString(36).slice(-4).toUpperCase(); localStorage.setItem('psg_device_id',d);} return d; }
@@ -1074,8 +1091,10 @@ function saveCatalogueItem(editCode){
   if(!editCode && DB.rates.catalogue.find(c=>c.code===code)){toast('Code already exists — click ↺ New to generate another');return;}
   const ilDouble=document.getElementById('ncIlDouble').checked;
   const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,interlockDouble:ilDouble};
-  if(img) entry.img=img; else entry.img='';
-  if(gif) entry.gif=gif; else entry.gif='';
+  /* images stored separately to avoid localStorage quota — keep in-memory only */
+  entry.gif=gif; entry.img=img;
+  const targetCode=editCode||code;
+  saveCatImages(targetCode,gif,img);
   if(editCode){
     const idx=DB.rates.catalogue.findIndex(c=>c.code===editCode);
     if(idx>=0) DB.rates.catalogue[idx]={...DB.rates.catalogue[idx],...entry};
@@ -1859,11 +1878,13 @@ function autoPullIfEmpty(){ if(SB && (DB.quotes||[]).length===0) cloudPull(); }
 /* ==== WINDOW CATALOGUE GIFS (managed via Catalogue editor) ==== */
 const WINDOW_GIFS = {};
 function catImg(code, cat) {
-  return (cat&&cat.gif) || (cat&&cat.img) || '';
+  const gif=(cat&&cat.gif)||localStorage.getItem('psg_cat_gif_'+code)||'';
+  const img=(cat&&cat.img)||localStorage.getItem('psg_cat_img_'+code)||'';
+  return gif||img||'';
 }
 /* catImg for PDF/print: never returns GIF (use static cat.img only) */
 function catImgStatic(code, cat) {
-  const img=(cat&&cat.img)||'';
+  const img=(cat&&cat.img)||localStorage.getItem('psg_cat_img_'+code)||'';
   if(img.startsWith('data:image/gif')) return '';
   return img;
 }
