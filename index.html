@@ -272,10 +272,13 @@ function saveCatImages(code,gif,img){
 }
 function loadCatImages(code){ return { gif:localStorage.getItem('psg_cat_gif_'+code)||'', img:localStorage.getItem('psg_cat_img_'+code)||'' }; }
 function save(){
-  /* strip large image data from catalogue before serialising to avoid quota errors */
+  /* migrate any images still living in the DB object to their own separate keys, then strip */
   const dbCopy=JSON.parse(JSON.stringify(DB));
   if(dbCopy.rates&&dbCopy.rates.catalogue){
-    dbCopy.rates.catalogue=dbCopy.rates.catalogue.map(c=>{ const e={...c}; delete e.gif; delete e.img; return e; });
+    dbCopy.rates.catalogue=dbCopy.rates.catalogue.map(c=>{
+      if(c.gif||c.img) saveCatImages(c.code,c.gif||'',c.img||'');
+      const e={...c}; delete e.gif; delete e.img; return e;
+    });
   }
   try{ localStorage.setItem(LS_KEY,JSON.stringify(dbCopy)); }
   catch(e){ toast('⚠ Save failed — browser storage full. Try clearing old data.','error'); console.error('save() quota error',e); }
@@ -1066,16 +1069,10 @@ function previewCatImg(inp){
 }
 function previewCatGif(inp){
   if(!inp.files[0]) return;
-  const file=inp.files[0];
-  const MAX=2*1024*1024; // 2MB limit for GIF
-  if(file.size>MAX){
-    toast('GIF too large (max 2 MB). Tip: reduce size/resolution at ezgif.com → Optimize before uploading.');
-    inp.value=''; return;
-  }
   const reader=new FileReader();
   reader.onload=e=>{document.getElementById('ncGifData').value=e.target.result;
     document.getElementById('ncGifPreview').innerHTML=`<img src="${e.target.result}" style="max-height:100px;border:1px solid var(--line)">`;};
-  reader.readAsDataURL(file);
+  reader.readAsDataURL(inp.files[0]);
 }
 function saveCatalogueItem(editCode){
   const code=(document.getElementById('ncCode').value||'').trim();
