@@ -451,7 +451,7 @@ function calcWindow(w){
     addSec('Outside Section','Outer',ds.outer);
     addSec('Divider Section','Divider',ds.divider);
     if(wtype!=='sliding') addSec('Bidding Section','Bidding',ds.bidding);
-    addSec('Netting Section','Net',ds.netting);
+    if(w.netting) addSec('Netting Section','Net',ds.netting);
     addSec('Shutter Section','Shutter',ds.shutter);
     // ---- multi-segment fixed: internal mullions & transoms ----
     if(wtype==='fixed'){
@@ -566,6 +566,7 @@ function prodGroups(w){
     const {g:gv,des}=resolveG(w,series);
     [['Outer',des.outer],['Divider',des.divider],['Bidding',des.bidding],['Net',des.netting],['Shutter',des.shutter]].forEach(([sec,expr])=>{
       if(!expr || !hasSection(series,sec)) return;
+      if(sec==='Net' && !w.netting) return;
       const merged={}; sectionPieces(expr,gv,series).forEach(p=>{ const L=rup(p.len*FT_MM)-ded, c=p.cnt*qty; if(L>0&&c>0) merged[L]=(merged[L]||0)+c; });
       g(sec==='Net'?'Netting':sec, partOf(sec), Object.entries(merged).map(([L,c])=>({len:+L,cnt:c})));
     });
