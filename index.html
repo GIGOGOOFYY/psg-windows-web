@@ -716,10 +716,10 @@ function renderBOM(){
   const q=curr(), bom=calcBOM(q);
   document.getElementById('subview').innerHTML=`
   <div class="card" style="margin-bottom:14px"><div class="hd"><b>Aluminium — Bill of Materials</b><span class="chip">${bom.totalBars} bars total · whole quotation</span></div>
-   <div class="bd" style="padding:0;overflow:auto">${bom.aluRows.length?`<table><thead><tr><th>Profile</th><th>Series</th><th class="center">Bars</th><th class="center">Bar length</th><th class="right">Wastage</th></tr></thead>
-     <tbody>${bom.aluRows.map(r=>`<tr><td><b>${esc(r.profile)}</b></td><td class="muted">${esc(r.series)}</td>
-       <td class="center"><b>${r.bars}</b></td><td class="center">${r.barFt}ft</td><td class="right">${r.wastagePct.toFixed(1)}%</td></tr>`).join('')}</tbody>
-     <tfoot><tr><td colspan="2" class="right"><b>Total bars</b></td><td class="center"><b>${bom.totalBars}</b></td><td colspan="2"></td></tr></tfoot></table>`
+   <div class="bd" style="padding:0;overflow:auto">${bom.aluRows.length?`<table><thead><tr><th>Profile</th><th>Series</th><th class="center">Bars</th><th class="center">Bar length</th><th class="right">Net rft</th><th class="right">Gross rft</th><th class="right">Wastage</th></tr></thead>
+     <tbody>${bom.aluRows.map(r=>{ const netRft=(r.usedMm/304.8).toFixed(1), grossRft=(r.bars*r.barFt).toFixed(0); return `<tr><td><b>${esc(r.profile)}</b></td><td class="muted">${esc(r.series)}</td>
+       <td class="center"><b>${r.bars}</b></td><td class="center">${r.barFt}ft</td><td class="right muted">${netRft}</td><td class="right"><b>${grossRft}</b></td><td class="right">${r.wastagePct.toFixed(1)}%</td></tr>`; }).join('')}</tbody>
+     <tfoot><tr><td colspan="2" class="right"><b>Total bars</b></td><td class="center"><b>${bom.totalBars}</b></td><td colspan="3"></td></tr></tfoot></table>`
      :'<div class="empty">Add windows to generate the BOM.</div>'}</div></div>
   <div class="row">
    <div class="card" style="flex:1;min-width:280px"><div class="hd"><b>Hardware & Accessories</b></div>
@@ -1466,9 +1466,9 @@ function doPrint(id,mode){
   } else if(mode==='bom'){ // project-wide bill of materials
     const bom=calcBOM(q);
     body+=`<div class="pw"><h3>Aluminium — ${bom.totalBars} bars total</h3>
-      <table style="margin-bottom:14px"><thead><tr><th>Profile</th><th>Series</th><th style="text-align:center">Bars</th><th style="text-align:center">Bar length</th><th style="text-align:right">Wastage</th></tr></thead>
-       <tbody>${bom.aluRows.map(r=>`<tr><td><b>${esc(r.profile)}</b></td><td>${esc(r.series)}</td><td style="text-align:center">${r.bars}</td><td style="text-align:center">${r.barFt}ft</td><td style="text-align:right">${r.wastagePct.toFixed(1)}%</td></tr>`).join('')||'<tr><td colspan=5 style="color:#999">No windows</td></tr>'}
-        <tr><td colspan=2 style="text-align:right"><b>Total bars</b></td><td style="text-align:center"><b>${bom.totalBars}</b></td><td colspan=2></td></tr></tbody></table></div>
+      <table style="margin-bottom:14px"><thead><tr><th>Profile</th><th>Series</th><th style="text-align:center">Bars</th><th style="text-align:center">Bar length</th><th style="text-align:right">Net rft</th><th style="text-align:right">Gross rft</th><th style="text-align:right">Wastage</th></tr></thead>
+       <tbody>${bom.aluRows.map(r=>{ const netRft=(r.usedMm/304.8).toFixed(1),grossRft=(r.bars*r.barFt).toFixed(0); return `<tr><td><b>${esc(r.profile)}</b></td><td>${esc(r.series)}</td><td style="text-align:center">${r.bars}</td><td style="text-align:center">${r.barFt}ft</td><td style="text-align:right;color:#666">${netRft}</td><td style="text-align:right"><b>${grossRft}</b></td><td style="text-align:right">${r.wastagePct.toFixed(1)}%</td></tr>`; }).join('')||'<tr><td colspan=7 style="color:#999">No windows</td></tr>'}
+        <tr><td colspan=2 style="text-align:right"><b>Total bars</b></td><td style="text-align:center"><b>${bom.totalBars}</b></td><td colspan=3></td></tr></tbody></table></div>
      <div class="pw"><h3>Hardware & Accessories</h3>
       <table style="margin-bottom:14px"><thead><tr><th>Item</th><th style="text-align:right">Quantity</th></tr></thead>
        <tbody>${bom.hwRows.map(r=>`<tr><td>${esc(r.item)}</td><td style="text-align:right">${r.qty} ${r.unit}</td></tr>`).join('')}</tbody></table></div>
