@@ -288,8 +288,7 @@ function save(){
 function deviceId(){ let d=localStorage.getItem('psg_device_id'); if(!d){ d='DEV-'+Math.random().toString(36).slice(2,10).toUpperCase()+'-'+Date.now().toString(36).slice(-4).toUpperCase(); localStorage.setItem('psg_device_id',d);} return d; }
 let ME=null; // current user
 function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===String(u||'').toLowerCase()); }
-function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
-  const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
+function deviceApproved(user){ return true; /* TEMP: device mode bypassed */ }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
 function resetRates(){ DB.rates=structuredClone(SEED); save(); toast('Rates reset to workbook defaults'); }
 
