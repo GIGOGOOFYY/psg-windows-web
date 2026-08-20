@@ -302,34 +302,58 @@ function seriesFor(wtype,thermal){
   return list;
 }
 // Derive brand+lockType for each SEED handle from handleModels
+const SLIDING_LOCKS=new Set(['Push Lock','Latch Lock']);
+function inferWinType(lockType){ return SLIDING_LOCKS.has(lockType)?'sliding':'casement'; }
 function seedHandleMeta(){
   const m={};
   Object.entries(IL.handleModels).forEach(([key,models])=>{
     const [brand,...rest]=key.split('|'); const lockType=rest.join('|');
-    models.forEach(h=>{ m[h]={brand,lockType}; });
+    models.forEach(h=>{ m[h]={brand,lockType,winType:inferWinType(lockType)}; });
   });
   return m;
 }
 function getHandleMeta(name){
   const db=(DB.rates.handleMeta||{})[name];
-  if(db) return db;
-  return seedHandleMeta()[name]||{brand:'',lockType:''};
+  if(db){ if(!db.winType) db.winType=inferWinType(db.lockType||''); return db; }
+  return seedHandleMeta()[name]||{brand:'',lockType:'',winType:'casement'};
 }
-function brandsFor(series,lockType){
+function brandsFor(series,lockType,wtype){
   const seedB=IL.handleBrands[(series||'')+'|'+(lockType||'')]||IL.handleBrands[series]||[];
-  // Include brands from user-added DB handles that match lockType
+  // Include brands from user-added DB handles that match lockType and winType
   const dbB=Object.entries(DB.rates.handleMeta||{})
-    .filter(([,m])=>m.brand&&(!lockType||m.lockType===lockType))
+    .filter(([,m])=>{
+      if(!m.brand) return false;
+      if(lockType && m.lockType!==lockType) return false;
+      const wt=m.winType||inferWinType(m.lockType||'');
+      if(wtype && wt!=='both' && wt!==wtype) return false;
+      return true;
+    })
     .map(([,m])=>m.brand);
-  return [...new Set([...seedB,...dbB])];
+  // From seed also filter by wtype
+  const seedFiltered = wtype ? seedB.filter(b=>{
+    // check if this brand has any models matching wtype
+    return (IL.handleModels[(b||'')+'|'+(lockType||'')]||[]).some(h=>{
+      const wt=inferWinType(lockType||'');
+      return wt==='both'||wt===wtype;
+    });
+  }) : seedB;
+  return [...new Set([...seedFiltered,...dbB])];
 }
-function modelsFor(brand,lockType){
+function modelsFor(brand,lockType,wtype){
   const seedM=IL.handleModels[(brand||'')+'|'+(lockType||'')]||[];
-  // Include user-added DB handles that match brand+lockType
+  // Include user-added DB handles that match brand+lockType+winType
   const dbM=Object.entries(DB.rates.handles)
-    .filter(([k])=>{ const m=getHandleMeta(k); return m.brand===brand&&m.lockType===lockType&&brand; })
+    .filter(([k])=>{
+      const m=getHandleMeta(k);
+      if(m.brand!==brand||m.lockType!==lockType||!brand) return false;
+      const wt=m.winType||inferWinType(m.lockType||'');
+      if(wtype && wt!=='both' && wt!==wtype) return false;
+      return true;
+    })
     .map(([k])=>k);
-  return [...new Set([...seedM,...dbM])];
+  // For seed models, filter by wtype (inferred from lockType)
+  const seedFiltered = wtype ? seedM.filter(()=>{ const wt=inferWinType(lockType||''); return wt==='both'||wt===wtype; }) : seedM;
+  return [...new Set([...seedFiltered,...dbM])];
 }
 function hingesFor(series){ return IL.hinges[series]||[]; }
 function widthsFor(series){ return SEED.widths[rateSeries(series)]||[]; }
@@ -776,7 +800,7 @@ function winFormHTML(w,r){
   const wtype=w.wtype||'casement';
   const bind=`oninput="upd('${w.id}',this)" onchange="upd('${w.id}',this)"`;
   const seriesList=seriesFor(wtype,w.thermal||'NO');
-  const brands=brandsFor(w.series,w.lockType), models=modelsFor(w.handleBrand,w.lockType), hinges=hingesFor(w.series);
+  const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series);
   const widths=widthsFor(w.series), locks=IL.lockTypes[wtype]||[];
   const isFixed=wtype==='fixed', isSlide=wtype==='sliding', isCase=wtype==='casement';
   const isDouble=(w.glazing==='Double');
@@ -892,10 +916,10 @@ function upd(id,el){
   if(k==='category'){ w.wtype=typeFor(w.value=el.value); if(w.wtype==='sliding')w.thermal='NO';
     const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(IL.lockTypes[w.wtype]||[])[0]||''; w.handleBrand='';w.handle='';w.hinge=''; }
   if(k==='thermal'){ const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.handleBrand='';w.handle=''; w.hinge=''; }
-  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series).includes(w.hinge))w.hinge=''; }
+  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series).includes(w.hinge))w.hinge=''; }
   if(k==='width'){ w.picks={}; }
-  if(k==='lockType'){ if(!brandsFor(w.series,w.lockType).includes(w.handleBrand)){w.handleBrand='';w.handle='';} }
-  if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType).includes(w.handle)) w.handle=''; }
+  if(k==='lockType'){ if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} }
+  if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType,w.wtype).includes(w.handle)) w.handle=''; }
   if(k==='glazing'){ w.glassThk=''; w.glassOuter='Clear'; w.glassInner='Clear'; w.glassOuterThk=''; w.glassInnerThk=''; if(!w.spacer)w.spacer=(DB.rates.spacers[0]||{}).size||''; w.picks={}; }
   save(); cloudSaveQuote(q);
   const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk'].includes(k);
@@ -1178,12 +1202,16 @@ function renderRates(){
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
      </tbody></table></div></div>
    <div class="f2">
-     <div class="card"><div class="hd"><b>Handles</b><button class="sm" onclick="addHandle()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>Model</th><th>Brand</th><th>Lock Type</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
-       ${Object.entries(DB.rates.handles).map(([k,v])=>{ const hm=getHandleMeta(k); const knownBrands=['KINLONG','KEVATA','HOPPO','CHINESE','LOCAL']; const knownLocks=['Multi Lock','Simple Lock','Push Lock','Latch Lock','Espag']; return `<tr>
+     <div class="card"><div class="hd"><b>Handles</b><button class="sm" onclick="addHandle()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>Model</th><th>Brand</th><th>Lock Type</th><th>Window Type</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
+       ${Object.entries(DB.rates.handles).map(([k,v])=>{ const hm=getHandleMeta(k); const knownBrands=['KINLONG','KEVATA','HOPPO','CHINESE','LOCAL']; const knownLocks=['Multi Lock','Simple Lock','Push Lock','Latch Lock','Espag']; const wt=hm.winType||inferWinType(hm.lockType||''); return `<tr>
          <td><input style="max-width:120px" value="${esc(k)}" onchange="renameHandle('${jsq(k)}',this.value)"></td>
          <td><input list="brandList" style="max-width:100px" value="${esc(hm.brand||'')}" placeholder="e.g. KINLONG" onchange="setHandleMeta('${jsq(k)}','brand',this.value)"></td>
-         <td><select style="max-width:110px" onchange="setHandleMeta('${jsq(k)}','lockType',this.value)">
+         <td><select style="max-width:110px" onchange="setHandleMeta('${jsq(k)}','lockType',this.value);setHandleMeta('${jsq(k)}','winType',inferWinType(this.value))">
            <option value="">—</option>${knownLocks.map(t=>`<option ${hm.lockType===t?'selected':''}>${t}</option>`).join('')}</select></td>
+         <td><select style="max-width:130px" onchange="setHandleMeta('${jsq(k)}','winType',this.value)">
+           <option value="casement" ${wt==='casement'?'selected':''}>Casement &amp; Awning</option>
+           <option value="sliding" ${wt==='sliding'?'selected':''}>Sliding</option>
+           <option value="both" ${wt==='both'?'selected':''}>Both</option></select></td>
          <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${v}" onchange="DB.rates.handles['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
          <td><button class="ghost sm danger" onclick="delHandle('${jsq(k)}')">✕</button></td></tr>`; }).join('')}
      </tbody></table><datalist id="brandList"><option>KINLONG</option><option>KEVATA</option><option>HOPPO</option><option>CHINESE</option><option>LOCAL</option></datalist></div></div>
@@ -1292,7 +1320,7 @@ function addAccessory(){ const n='New Accessory '+Date.now().toString().slice(-4
 function delAcc(k){ if(!confirm('Remove "'+k+'" from accessories?'))return; delete DB.rates.accessories[k]; save(); renderRates(); }
 function renameAcc(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.accessories[oldKey]; delete DB.rates.accessories[oldKey]; DB.rates.accessories[newKey]=v; save(); }
 function setHandleMeta(name,field,val){ if(!DB.rates.handleMeta) DB.rates.handleMeta={}; if(!DB.rates.handleMeta[name]) DB.rates.handleMeta[name]={}; DB.rates.handleMeta[name][field]=val; save(); }
-function addHandle(){ const n='New Handle '+Date.now().toString().slice(-4); DB.rates.handles[n]=0; if(!DB.rates.handleMeta) DB.rates.handleMeta={}; DB.rates.handleMeta[n]={brand:'',lockType:''}; save(); renderRates(); }
+function addHandle(){ const n='New Handle '+Date.now().toString().slice(-4); DB.rates.handles[n]=0; if(!DB.rates.handleMeta) DB.rates.handleMeta={}; DB.rates.handleMeta[n]={brand:'',lockType:'',winType:'casement'}; save(); renderRates(); }
 function delHandle(k){ if(!confirm('Remove handle "'+k+'"?'))return; delete DB.rates.handles[k]; if(DB.rates.handleMeta) delete DB.rates.handleMeta[k]; save(); renderRates(); }
 function renameHandle(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.handles[oldKey]; delete DB.rates.handles[oldKey]; DB.rates.handles[newKey]=v; if(DB.rates.handleMeta&&DB.rates.handleMeta[oldKey]){ DB.rates.handleMeta[newKey]=DB.rates.handleMeta[oldKey]; delete DB.rates.handleMeta[oldKey]; } save(); }
 function addHinge(){ const n='New Hinge '+Date.now().toString().slice(-4); DB.rates.hinges[n]=0; save(); renderRates(); }
