@@ -564,9 +564,15 @@ function prodGroups(w){
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
   } else {
     const {g:gv,des}=resolveG(w,series);
+    const isFixed=(w.wtype||'casement')==='fixed';
     [['Outer',des.outer],['Divider',des.divider],['Bidding',des.bidding],['Net',des.netting],['Shutter',des.shutter]].forEach(([sec,expr])=>{
-      if(!expr || !hasSection(series,sec)) return;
       if(sec==='Net' && !w.netting) return;
+      if(!hasSection(series,sec)) return;
+      if(!expr){
+        /* fallback for fixed windows with no outer formula: 2×OH + 2×OW */
+        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); if(OH>0&&OW>0) g('Outer',partOf('Outer'),[{len:rup(OH*FT_MM)-ded,cnt:2*qty},{len:rup(OW*FT_MM)-ded,cnt:2*qty}]); }
+        return;
+      }
       const merged={}; sectionPieces(expr,gv,series).forEach(p=>{ const L=rup(p.len*FT_MM)-ded, c=p.cnt*qty; if(L>0&&c>0) merged[L]=(merged[L]||0)+c; });
       g(sec==='Net'?'Netting':sec, partOf(sec), Object.entries(merged).map(([L,c])=>({len:+L,cnt:c})));
     });
