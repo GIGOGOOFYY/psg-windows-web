@@ -444,7 +444,7 @@ function calcWindow(w){
     const ilMult=_ilDouble?2:1;
     if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
-    if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',per_open);
+    if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',2*OH+nSh*SW);
   } else {
     // per-design formulas from the workbook design sheet
     const ds=designSections(w,series); dsSec=ds;
@@ -561,7 +561,7 @@ function prodGroups(w){
     const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
     const _ilMult=_ilDbl?2:1;
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
-    if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
+    if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(SW,nSh)]);
   } else {
     const {g:gv,des}=resolveG(w,series);
     const isFixed=(w.wtype||'casement')==='fixed';
