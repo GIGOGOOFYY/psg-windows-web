@@ -3656,12 +3656,14 @@ function calcBOM(q){
   const glMap={};
   (q.windows||[]).forEach(w=>{ const g=glassOf(w);
     const key=g.label+'|'+g.paneW+'|'+g.paneH;
-    if(!glMap[key]) glMap[key]={...g,totalUnits:0,totalSpacer:0};
+    if(!glMap[key]) glMap[key]={...g,totalUnits:0,totalSpacer:0,totalSqft:0};
     glMap[key].totalUnits+=g.units;
+    glMap[key].totalSqft=+(glMap[key].totalSqft+g.areaSft).toFixed(2);
     glMap[key].totalSpacer=+(glMap[key].totalSpacer+(g.spacerRft||0)).toFixed(2);
   });
   const glassRows=Object.values(glMap);
-  return {aluRows,hwRows,glassRows,totalBars:aluRows.reduce((s,r)=>s+r.bars,0)};
+  const totalGlassSqft=+glassRows.reduce((s,g)=>s+g.totalSqft,0).toFixed(2);
+  return {aluRows,hwRows,glassRows,totalBars:aluRows.reduce((s,r)=>s+r.bars,0),totalGlassSqft};
 }
 
 /* ============================ ROUTER ============================ */
@@ -3764,19 +3766,21 @@ function renderBOM(){
   <div class="row">
    <div class="card" style="flex:1;min-width:280px"><div class="hd"><b>Hardware & Accessories</b></div>
      <div class="bd" style="padding:0"><table><tbody>${bom.hwRows.map(r=>`<tr><td>${esc(r.item)}</td><td class="right"><b>${r.qty} ${r.unit}</b></td></tr>`).join('')||'<tr><td class="muted" style="padding:16px">No data</td></tr>'}</tbody></table></div></div>
-   <div class="card" style="flex:1;min-width:280px"><div class="hd"><b>Glass</b></div>
-     <div class="bd" style="padding:0"><table><tbody>${bom.glassRows.map(g=>{
+   <div class="card" style="flex:1;min-width:280px"><div class="hd"><b>Glass</b><span class="chip">${bom.totalGlassSqft} Sft total</span></div>
+     <div class="bd" style="padding:0"><table><thead><tr><th>Type / Size</th><th class="right">Panes</th><th class="right">Sqft</th></tr></thead><tbody>${bom.glassRows.map(g=>{
        const wMm=Math.round(g.paneW*304.8),hMm=Math.round(g.paneH*304.8),dim=`${wMm}×${hMm}mm`;
        if(g.glazing==='Double'){
          const u=g.totalUnits;
-         return `<tr><td colspan=2 style="padding:6px 12px;font-weight:600;background:#f8f9fa">${u} IGU · ${dim} (${g.unitThk||'?'}mm)</td></tr>
-           <tr><td style="padding-left:20px">Outer — ${esc(g.outer)} ${esc(g.outerThk)}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td></tr>
-           <tr><td style="padding-left:20px">Inner — ${esc(g.inner||'')} ${esc(g.innerThk||'')}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td></tr>
-           ${g.totalSpacer?`<tr><td style="padding-left:20px" class="muted">Spacer ${esc(g.spacer||'')}</td><td class="right">${g.totalSpacer} rft</td></tr>`:''}`;
+         return `<tr><td colspan=3 style="padding:6px 12px;font-weight:600;background:#f8f9fa">${u} IGU · ${dim} (${g.unitThk||'?'}mm) — ${g.totalSqft} Sft</td></tr>
+           <tr><td style="padding-left:20px">Outer — ${esc(g.outer)} ${esc(g.outerThk)}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td><td class="right muted"></td></tr>
+           <tr><td style="padding-left:20px">Inner — ${esc(g.inner||'')} ${esc(g.innerThk||'')}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td><td class="right muted"></td></tr>
+           ${g.totalSpacer?`<tr><td style="padding-left:20px" class="muted">Spacer ${esc(g.spacer||'')}</td><td class="right">${g.totalSpacer} rft</td><td></td></tr>`:''}`;
        } else {
          const u=g.totalUnits;
-         return `<tr><td>${esc(g.outer)} ${esc(g.outerThk)} · ${dim}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td></tr>`;
-       }}).join('')||'<tr><td class="muted" style="padding:16px">No data</td></tr>'}</tbody></table></div></div>
+         return `<tr><td>${esc(g.outer)} ${esc(g.outerThk)} · ${dim}</td><td class="right"><b>${u} pane${u!=1?'s':''}</b></td><td class="right"><b>${g.totalSqft} Sft</b></td></tr>`;
+       }}).join('')||'<tr><td class="muted" style="padding:16px">No data</td></tr>'}
+       <tr style="border-top:2px solid #dee2e6"><td><b>Total</b></td><td></td><td class="right"><b>${bom.totalGlassSqft} Sft</b></td></tr>
+     </tbody></table></div></div>
   </div>`;
 }
 
