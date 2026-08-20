@@ -440,7 +440,7 @@ function calcWindow(w){
     ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,SW*nSh); });
     if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',SH*nSh);
     const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948'||series==='BOX_SLIDING';
+    const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948';
     const ilMult=_ilDouble?2:1;
     if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
@@ -558,7 +558,7 @@ function prodGroups(w){
     if(hasSection(series,'Shutter Top')) g('Shutter Top',partOf('Shutter Top'),[cut(SW,nSh)]);
     if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[cut(SH,nSh)]);
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948'||series==='BOX_SLIDING';
+    const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
     const _ilMult=_ilDbl?2:1;
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
     if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[cut(OH,2),cut(OW,2)]);
@@ -1209,7 +1209,7 @@ function renderRates(){
          <td class="right"><input type="number" style="max-width:90px;text-align:right" value="${s.rate}" onchange="DB.rates.spacers[${i}].rate=num(this.value);save();toast('Saved')"></td>
          <td class="right"><button class="ghost sm danger" onclick="DB.rates.spacers.splice(${i},1);save();renderRates()">✕</button></td></tr>`).join('')}</tbody></table></div></div>
    </div>
-   <div class="card" style="margin-top:16px"><div class="hd"><b>Aluminium Profiles by System</b></div><div class="bd">
+   <div class="card" style="margin-top:16px"><div class="hd"><b>Aluminium Profiles by System</b><button class="sm" onclick="addSysPart()">+ Add Part</button></div><div class="bd">
      <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
      <div id="sysTable" style="overflow:auto"></div></div></div>
    <div class="card" style="margin-top:16px">
@@ -1224,14 +1224,29 @@ function renderRates(){
   renderHandleAccTable();
   renderSlideHWTable();
 }
+const ALL_SECTIONS=['Outer','Outer Bottom','Outer Top','Outer Height','Shutter','Shutter Bottom','Shutter Top','Shutter Height','Interlock','Divider','Bidding','Net'];
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
   const parts=DB.rates.systems[sys], fins=SEED.finishes;
-  document.getElementById('sysTable').innerHTML=`<table><thead><tr><th>Part</th><th>Width</th><th>Section</th>${fins.map(f=>`<th class="right">${f}</th>`).join('')}</tr></thead>
-   <tbody>${parts.map((p,i)=>`<tr><td><b>${esc(p.part)}</b></td><td class="muted">${p.width||''}</td><td>${esc(p.section)}</td>
-     ${fins.map(f=>`<td class="right"><input style="max-width:90px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  const secOpts=ALL_SECTIONS.map(s=>`<option value="${s}">${s}</option>`).join('');
+  document.getElementById('sysTable').innerHTML=`<table><thead><tr><th>Part No.</th><th>Width</th><th>Section</th>${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
+   <tbody>${parts.map((p,i)=>`<tr>
+     <td><input style="max-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
+     <td><input style="max-width:80px" value="${esc(p.width||'')}" placeholder="e.g. 75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
+     <td><select style="max-width:140px" onchange="setSysPartField('${jsq(sys)}',${i},'section',this.value)">${ALL_SECTIONS.map(s=>`<option ${p.section===s?'selected':''}>${s}</option>`).join('')}</select></td>
+     ${fins.map(f=>`<td class="right"><input style="max-width:90px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
+     <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
+function setSysPartField(sys,i,field,v){ DB.rates.systems[sys][i][field]=v.trim(); save(); toast('Saved'); }
 function setPartRate(sys,i,fin,v){ const p=DB.rates.systems[sys][i]; if(v==='')delete p.rates[fin]; else p.rates[fin]=num(v); save(); toast('Saved'); }
+function addSysPart(){
+  const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
+  DB.rates.systems[sys].push({part:'NEW-PART',width:'75mm',section:'Outer',rates:{}});
+  save(); renderSysTable();
+  /* scroll to bottom of table */
+  const t=document.getElementById('sysTable'); if(t) t.scrollTop=t.scrollHeight;
+}
+function delSysPart(sys,i){ if(!confirm('Remove this part from '+sys+'?'))return; DB.rates.systems[sys].splice(i,1); save(); renderSysTable(); }
 function renderSlideHWTable(){
   const sel=document.getElementById('slideHWSel'); if(!sel) return;
   const sys=sel.value;
