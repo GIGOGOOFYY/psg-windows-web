@@ -3495,7 +3495,7 @@ function calcWindow(w){
   if(wtype!=='fixed'){
     const hr=w.handle?num(DB.rates.handles[w.handle]||0):0;
     const hq=(w.handleQty===0||w.handleQty==='0')?0:(num(w.handleQty)||1);
-    if(w.handle){ addHw(w.handle,hq,hr,'pc',w.handle);
+    if(w.handle){ const hLabel=[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', '); addHw(hLabel,hq,hr,'pc',w.handle);
       const accs=(DB.rates.handleAccessories||{})[w.handle]||[];
       accs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*hq, a.rate||0, a.unit||'pc'); }); }
     let rubberLen = isUrban(series)?shutLen : (series==='ECONOMY'?(bidLen+shutLen)*2:(bidLen*2)+shutLen);
