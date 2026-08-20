@@ -546,7 +546,7 @@ function bestBar(pieces,series){
 function prodGroups(w){
   const qty=num(w.qty)||1, ded=deductMM(w.series), rup=x=>Math.ceil(x), groups=[], series=w.series;
   const g=(name,part,pieces)=>{ const pf=pieces.filter(p=>p.len>0&&p.cnt>0); if(pf.length) groups.push({name,part,pieces:pf}); };
-  const partOf=(sec)=>{ const p=pickPart(series,sec,w.width,undefined,w.glazing||'Single'); return p?p.part+(p.width?(' '+p.width):''):''; };
+  const partOf=(sec)=>{ const picked=(w.picks||{})[sec]; const p=pickPart(series,sec,w.width,picked,w.glazing||'Single'); return p?p.part+(p.width?(' '+p.width):''):''; };
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
     const cut=(len,cnt)=>({len:rup(len*FT_MM)-ded,cnt:cnt*qty});
