@@ -4219,16 +4219,9 @@ function deductMM(series){ return 0; } // legacy stub – use profileDed()
    sectionType: 'outer' | 'shutter' | 'bidding' | 'netting'
    Looks up IL.cutDeductMM[profileName][sectionType] (set in Rates → Profile Cut Deductions). */
 function profileDed(){ return 0; } // legacy stub
-/* sectionDed: looks up cut adjustment for a section from DB.rates.sectionCutAdj[series][section].
-   cut_length = opening_mm + sectionDed   (+ve = longer than opening, -ve = shorter) */
-function sectionDed(series, section){
-  if(!section||!series) return 0;
-  const rs=(typeof rateSeries==='function')?rateSeries(series):series;
-  const map=(DB.rates.sectionCutAdj&&DB.rates.sectionCutAdj[rs])||{};
-  return num(map[section]||0);
-}
-/* partRowDed: legacy stub */
-function partRowDed(series, partName){ return 0; }
+/* cutDed is stored per part row in DB.rates.systems[series][i].cutDed
+   prodGroups reads it via pickPart() → p.cutDed directly (collar box vs box series differ) */
+function partRowDed(){ return 0; } // legacy stub
 
 /* ============================ PRICING ENGINE ============================ */
 const SERIES_ALIAS={URBAN_PLUS:'URBAN'};        // shares URBAN profiles
@@ -4237,32 +4230,35 @@ const THERMAL_SERIES=new Set(['URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'])
 function stockOptions(series){ return THERMAL_SERIES.has(series)?[18]:STOCK_FT; }
 function rateSeries(s){ return SERIES_ALIAS[s]||s; }
 function accRate(name){ const a=DB.rates.accessories[name]; return a?num(a.rate):0; }
+/* normPart: ensure every part row uses sections[] array (migrates old section string) */
+function normPart(p){ if(p.sections) return p; return Object.assign({},p,{sections:p.section?[p.section]:[]}); }
+function partSections(p){ return p.sections||(p.section?[p.section]:[]); }
 function sysParts(series){
   const rs=rateSeries(series);
-  const db=DB.rates.systems[rs]||[];
-  const seed=SEED.systems[rs]||[];
-  // merge: add any SEED parts not yet in user's DB (new parts added after last sync)
-  const dbKeys=new Set(db.map(p=>p.part+'|'+p.section+'|'+p.width));
-  const extra=seed.filter(p=>!dbKeys.has(p.part+'|'+p.section+'|'+p.width));
+  const db=(DB.rates.systems[rs]||[]).map(normPart);
+  const seed=(SEED.systems[rs]||[]).map(normPart);
+  // merge: add any SEED parts not yet in user's DB (keyed by part+width)
+  const dbKeys=new Set(db.map(p=>p.part+'|'+(p.width||'')));
+  const extra=seed.filter(p=>!dbKeys.has(p.part+'|'+(p.width||'')));
   return extra.length?[...db,...extra]:db;
 }
-function hasSection(series,sec){ return sysParts(series).some(p=>p.section===sec); }
+function hasSection(series,sec){ return sysParts(series).some(p=>partSections(p).includes(sec)); }
 function getGlaze(series,part,section,width){
   // glaze tags live in SEED (source of truth), not in user's DB copy
   const sp=(SEED.systems[rateSeries(series)]||[]).find(p=>p.part===part&&p.section===section&&p.width===width);
   return sp?sp.glaze||null:null;
 }
 function partsFor(series,section,widthPref,glazing){
-  let parts=sysParts(series).filter(p=>p.section===section);
+  let parts=sysParts(series).filter(p=>partSections(p).includes(section));
   if(!parts.length) return [];
   if(widthPref){ const m=parts.filter(p=>String(p.width)===String(widthPref)); if(m.length) parts=m; }
-  const hasTags=parts.some(p=>getGlaze(series,p.part,p.section,p.width));
+  const hasTags=parts.some(p=>getGlaze(series,p.part,section,p.width));
   if(hasTags && glazing){
     const tag=glazing==='Double'?'dg':'sg';
-    const tagged=parts.filter(p=>getGlaze(series,p.part,p.section,p.width)===tag);
+    const tagged=parts.filter(p=>getGlaze(series,p.part,section,p.width)===tag);
     if(tagged.length) return tagged;
   }
-  if(hasTags) return parts.filter(p=>!getGlaze(series,p.part,p.section,p.width));
+  if(hasTags) return parts.filter(p=>!getGlaze(series,p.part,section,p.width));
   return parts;
 }
 function pickPart(series,section,widthPref,pickedName,glazing){
@@ -4420,13 +4416,13 @@ function bestBar(pieces,series){
 function prodGroups(w){
   const qty=num(w.qty)||1, rup=x=>Math.ceil(x), groups=[], series=w.series;
   const g=(name,part,pieces)=>{ const pf=pieces.filter(p=>p.len>0&&p.cnt>0); if(pf.length) groups.push({name,part,pieces:pf}); };
-  const partOf=(sec)=>{ const picked=(w.picks||{})[sec]; const p=pickPart(series,sec,w.width,picked,w.glazing||'Single'); return p?p.part+(p.width?(' '+p.width):''):''; };
+  /* pickFor: returns the actual part row selected for a section (carries .cutDed from DB row) */
+  const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],w.glazing||'Single');
+  const partOf=(sec)=>{ const p=pickFor(sec); return p?p.part+(p.width?(' '+p.width):''):''; };
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
-    /* === Per-part cut deductions (from Rates → Aluminium Profiles by System → Cut Ded column) ===
-       cut_length = opening_mm + cutDed   (cutDed from the matching part row)
-       Each section independently controlled — positive extends beyond opening, negative is shorter. */
-    const _prd=(sec)=>sectionDed(series, sec);
+    /* cutDed comes from the picked part row directly — collar box vs box series each carry their own value */
+    const _prd=(sec)=>{ const p=pickFor(sec); return p?num(p.cutDed||0):0; };
     const _cut=(dimFt,sec)=>rup(dimFt*FT_MM)+_prd(sec);
     // Outer frame cuts
     if(hasSection(series,'Outer Bottom')) g('Outer Bottom',partOf('Outer Bottom'),[{len:_cut(OW,'Outer Bottom'),cnt:1*qty}]);
@@ -4451,11 +4447,11 @@ function prodGroups(w){
       if(!hasSection(series,sec)) return;
       if(!expr){
         /* fallback for fixed windows with no outer formula: 2×OH + 2×OW */
-        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_od=sectionDed(series,'Outer'); if(OH>0&&OW>0) g('Outer',_op,[{len:rup(OH*FT_MM)+_od,cnt:2*qty},{len:rup(OW*FT_MM)+_od,cnt:2*qty}]); }
+        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_pp=pickFor('Outer'),_od=_pp?num(_pp.cutDed||0):0; if(OH>0&&OW>0) g('Outer',_op,[{len:rup(OH*FT_MM)+_od,cnt:2*qty},{len:rup(OW*FT_MM)+_od,cnt:2*qty}]); }
         return;
       }
       const _secPart = partOf(sec);
-      const _secDed = sectionDed(series, sec);
+      const _pp2=pickFor(sec); const _secDed=_pp2?num(_pp2.cutDed||0):0;
       const merged={}; sectionPieces(expr,gv,series).forEach(p=>{ const L=rup(p.len*FT_MM)+_secDed, c=p.cnt*qty; if(L>0&&c>0) merged[L]=(merged[L]||0)+c; });
       g(sec==='Net'?'Netting':sec, _secPart, Object.entries(merged).map(([L,c])=>({len:+L,cnt:c})));
     });
@@ -5012,10 +5008,10 @@ function syncSeedParts(){
   let changed=false;
   Object.entries(SEED.systems).forEach(([sys,seedParts])=>{
     if(!DB.rates.systems[sys]) return;
-    const dbKeys=new Set(DB.rates.systems[sys].map(p=>p.part+'|'+p.section+'|'+p.width));
+    const dbKeys=new Set(DB.rates.systems[sys].map(p=>p.part+'|'+(p.width||'')));
     seedParts.forEach(sp=>{
-      if(!dbKeys.has(sp.part+'|'+sp.section+'|'+sp.width)){
-        DB.rates.systems[sys].push({part:sp.part,width:sp.width,section:sp.section,rates:{}});
+      if(!dbKeys.has(sp.part+'|'+(sp.width||''))){
+        DB.rates.systems[sys].push({part:sp.part,width:sp.width,sections:sp.section?[sp.section]:(sp.sections||[]),rates:{}});
         changed=true;
       }
     });
@@ -5138,40 +5134,43 @@ const ALL_SECTIONS=['Outer','Outer Bottom','Outer Top','Outer Height','Shutter',
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
   const parts=DB.rates.systems[sys], fins=SEED.finishes;
-  // Unique sections actually used in this system (in ALL_SECTIONS order)
-  const usedSecs=[...new Set(parts.map(p=>p.section))].sort((a,b)=>ALL_SECTIONS.indexOf(a)-ALL_SECTIONS.indexOf(b));
-  if(!DB.rates.sectionCutAdj) DB.rates.sectionCutAdj={};
-  if(!DB.rates.sectionCutAdj[sys]) DB.rates.sectionCutAdj[sys]={};
-  const adj=DB.rates.sectionCutAdj[sys];
-  // Compact section cut adj table
-  const adjHtml=`<div style="margin-bottom:14px">
-    <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;letter-spacing:.03em">SECTION CUT ADJUSTMENTS (mm) &nbsp;<span style="font-weight:400">— +N adds Nmm to opening length, -N subtracts</span></div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px 20px">
-    ${usedSecs.map(s=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap">
-      <span style="min-width:110px">${s}</span>
-      <input type="number" style="width:72px;text-align:right" value="${adj[s]??0}" title="+N adds Nmm to ${s} cut length"
-        onchange="setSectionCutAdj('${jsq(sys)}','${jsq(s)}',+this.value)">
-    </label>`).join('')}
-    </div></div>`;
-  document.getElementById('sysTable').innerHTML=adjHtml+`<table><thead><tr><th>Part No.</th><th>Width</th><th>Section</th>${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
+  // Section checkboxes: compact multi-select chips per row
+  const secChips=(p,i)=>ALL_SECTIONS.map(s=>{
+    const secs=partSections(p); const chk=secs.includes(s)?'checked':'';
+    return `<label style="display:inline-flex;align-items:center;gap:3px;margin:2px 4px 2px 0;font-size:11.5px;white-space:nowrap;cursor:pointer">
+      <input type="checkbox" ${chk} style="width:13px;height:13px" onchange="toggleSysSection('${jsq(sys)}',${i},'${s}',this.checked)">${s}</label>`;
+  }).join('');
+  document.getElementById('sysTable').innerHTML=`<table style="min-width:700px"><thead><tr>
+    <th>Part No.</th><th>Width</th>
+    <th title="+N adds Nmm to cut length; -N subtracts. Per part — collar box vs box series can differ.">Cut Adj<br><span style="font-weight:400;font-size:10px">+mm / −mm</span></th>
+    <th>Sections used (tick all that apply)</th>
+    ${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
    <tbody>${parts.map((p,i)=>`<tr>
      <td><input style="max-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
-     <td><input style="max-width:80px" value="${esc(p.width||'')}" placeholder="e.g. 75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
-     <td><select style="max-width:140px" onchange="setSysPartField('${jsq(sys)}',${i},'section',this.value)">${ALL_SECTIONS.map(s=>`<option ${p.section===s?'selected':''}>${s}</option>`).join('')}</select></td>
-     ${fins.map(f=>`<td class="right"><input style="max-width:90px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
+     <td><input style="max-width:72px" value="${esc(p.width||'')}" placeholder="75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
+     <td class="right"><input type="number" style="max-width:64px;text-align:right" value="${p.cutDed??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
+     <td style="min-width:320px">${secChips(p,i)}</td>
+     ${fins.map(f=>`<td class="right"><input style="max-width:80px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
      <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
-function setSectionCutAdj(sys,sec,v){
-  if(!DB.rates.sectionCutAdj) DB.rates.sectionCutAdj={};
-  if(!DB.rates.sectionCutAdj[sys]) DB.rates.sectionCutAdj[sys]={};
-  DB.rates.sectionCutAdj[sys][sec]=+v;
+function toggleSysSection(sys,i,sec,checked){
+  const p=DB.rates.systems[sys][i];
+  let secs=partSections(p);
+  if(checked){ if(!secs.includes(sec)) secs=[...secs,sec]; }
+  else { secs=secs.filter(s=>s!==sec); }
+  p.sections=secs; delete p.section;
   save(); toast('Saved');
 }
-function setSysPartField(sys,i,field,v){ if(field==='cutDed') DB.rates.systems[sys][i][field]=+v; else DB.rates.systems[sys][i][field]=(typeof v==='string'?v.trim():v); save(); toast('Saved'); }
+function setSysPartField(sys,i,field,v){
+  const p=DB.rates.systems[sys][i];
+  if(field==='cutDed') p[field]=+v;
+  else p[field]=(typeof v==='string'?v.trim():v);
+  save(); toast('Saved');
+}
 function setPartRate(sys,i,fin,v){ const p=DB.rates.systems[sys][i]; if(v==='')delete p.rates[fin]; else p.rates[fin]=num(v); save(); toast('Saved'); }
 function addSysPart(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
-  DB.rates.systems[sys].push({part:'NEW-PART',width:'75mm',section:'Outer',rates:{}});
+  DB.rates.systems[sys].push({part:'NEW-PART',width:'75mm',sections:['Outer'],cutDed:0,rates:{}});
   save(); renderSysTable();
   /* scroll to bottom of table */
   const t=document.getElementById('sysTable'); if(t) t.scrollTop=t.scrollHeight;
