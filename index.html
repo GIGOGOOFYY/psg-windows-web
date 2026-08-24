@@ -5140,15 +5140,15 @@ function renderSysTable(){
     return `<label style="display:inline-flex;align-items:center;gap:3px;margin:2px 4px 2px 0;font-size:11.5px;white-space:nowrap;cursor:pointer">
       <input type="checkbox" ${chk} style="width:13px;height:13px" onchange="toggleSysSection('${jsq(sys)}',${i},'${s}',this.checked)">${s}</label>`;
   }).join('');
-  document.getElementById('sysTable').innerHTML=`<table style="min-width:700px"><thead><tr>
-    <th>Part No.</th><th>Width</th>
+  document.getElementById('sysTable').innerHTML=`<table style="min-width:780px"><thead><tr>
+    <th style="min-width:110px">Part No.</th><th style="min-width:62px">Width</th>
     <th title="+N adds Nmm to cut length; -N subtracts. Per part — collar box vs box series can differ.">Cut Adj<br><span style="font-weight:400;font-size:10px">+mm / −mm</span></th>
     <th>Sections used (tick all that apply)</th>
     ${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
    <tbody>${parts.map((p,i)=>`<tr>
-     <td><input style="max-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
-     <td><input style="max-width:72px" value="${esc(p.width||'')}" placeholder="75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
-     <td class="right"><input type="number" style="max-width:64px;text-align:right" value="${p.cutDed??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
+     <td><input style="width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
+     <td><input style="width:62px" value="${esc(p.width||'')}" placeholder="75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
+     <td class="right"><input type="number" style="width:58px;text-align:right" value="${p.cutDed??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
      <td style="min-width:320px">${secChips(p,i)}</td>
      ${fins.map(f=>`<td class="right"><input style="max-width:80px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
      <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
