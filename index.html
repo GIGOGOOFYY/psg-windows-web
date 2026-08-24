@@ -4092,8 +4092,7 @@ function save(){
     const sl=DB.rates.interlock.lockTypes.sliding;
     if(!sl.includes('Latch Lock')) sl.push('Latch Lock');
   }
-  /* ensure cutDeductMM exists in runtime interlock */
-  if(DB.rates&&DB.rates.interlock&&!DB.rates.interlock.cutDeductMM) DB.rates.interlock.cutDeductMM={};
+
   /* migrate any images still living in the DB object to their own separate keys, then strip */
   const dbCopy=JSON.parse(JSON.stringify(DB));
   if(dbCopy.rates&&dbCopy.rates.catalogue){
@@ -4219,15 +4218,15 @@ function deductMM(series){ return 0; } // legacy stub – use profileDed()
 /* profileDed(profileName, sectionType)
    sectionType: 'outer' | 'shutter' | 'bidding' | 'netting'
    Looks up IL.cutDeductMM[profileName][sectionType] (set in Rates → Profile Cut Deductions). */
-function profileDed(profileName, sectionType){
-  if(!profileName) return 0;
-  // strip width suffix e.g. "DC-26AK 75mm" → "DC-26AK"
-  const key = profileName.split(' ')[0];
-  // Read from runtime DB (persisted) with SEED fallback
-  const _ded_src = (DB&&DB.rates&&DB.rates.interlock&&DB.rates.interlock.cutDeductMM)||IL.cutDeductMM||{};
-  const pd = _ded_src[key];
-  if(!pd || typeof pd!=='object') return 0;
-  return num(pd[sectionType]||0);
+function profileDed(){ return 0; } // legacy stub
+/* partRowDed: looks up cutDed for a named part in the series system table.
+   cut_length = opening_mm + cutDed
+   Positive = section longer than opening, negative = shorter. */
+function partRowDed(series, partName){
+  if(!partName||!series) return 0;
+  const rows=(DB.rates&&DB.rates.systems&&DB.rates.systems[series])||[];
+  const row=rows.find(r=>partName===r.part||partName.startsWith(r.part+' ')||partName.startsWith(r.part));
+  return row ? num(row.cutDed||0) : 0;
 }
 
 /* ============================ PRICING ENGINE ============================ */
@@ -4423,40 +4422,24 @@ function prodGroups(w){
   const partOf=(sec)=>{ const picked=(w.picks||{})[sec]; const p=pickPart(series,sec,w.width,picked,w.glazing||'Single'); return p?p.part+(p.width?(' '+p.width):''):''; };
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
-    /* === Per-profile cascade cut deductions ===
-       Outer  cut = opening_mm - outerDed
-       Shutter cut = Outer_cut - shutterDed  (cascade from outer)
-       Interlock uses Shutter height (no extra deduction)          */
-    const _outerWPart = partOf('Outer Bottom')||partOf('Outer Top')||partOf('Outer Height');
-    const _outerHPart = partOf('Outer Height')||partOf('Outer Bottom')||_outerWPart;
-    const _shutWPart  = partOf('Shutter Bottom')||partOf('Shutter Top')||partOf('Shutter Height');
-    const _shutHPart  = partOf('Shutter Height')||_shutWPart;
-    const _outerDedW  = profileDed(_outerWPart,'outer');
-    const _outerDedH  = profileDed(_outerHPart,'outer');
-    const _shutDedW   = profileDed(_shutWPart,'shutter');
-    const _shutDedH   = profileDed(_shutHPart,'shutter');
-    const _netPart    = partOf('Net');
-    const _netDedW    = profileDed(_netPart,'netting');
-    const _netDedH    = profileDed(_netPart,'netting');
-    // Compute cut lengths (mm)
-    const _hasOuter = hasSection(series,'Outer Bottom')||hasSection(series,'Outer Top');
-    const outerCutW  = rup(OW*FT_MM) - _outerDedW;
-    const outerCutH  = rup(OH*FT_MM) - _outerDedH;
-    const shutCutW   = (_hasOuter ? outerCutW : rup(OW*FT_MM)) - _shutDedW;
-    const shutCutH   = (_hasOuter ? outerCutH : rup(OH*FT_MM)) - _shutDedH;
+    /* === Per-part cut deductions (from Rates → Aluminium Profiles by System → Cut Ded column) ===
+       cut_length = opening_mm + cutDed   (cutDed from the matching part row)
+       Each section independently controlled — positive extends beyond opening, negative is shorter. */
+    const _prd=(sec)=>partRowDed(series, partOf(sec));
+    const _cut=(dimFt,sec)=>rup(dimFt*FT_MM)+_prd(sec);
     // Outer frame cuts
-    if(hasSection(series,'Outer Bottom')) g('Outer Bottom',partOf('Outer Bottom'),[{len:outerCutW,cnt:1*qty}]);
-    if(hasSection(series,'Outer Top'))    g('Outer Top',   partOf('Outer Top'),   [{len:outerCutW,cnt:1*qty}]);
-    if(hasSection(series,'Outer Height')) g('Outer Height',partOf('Outer Height'),[{len:outerCutH,cnt:2*qty}]);
-    // Shutter cuts (cascade from outer)
-    if(hasSection(series,'Shutter Bottom')) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:shutCutW,cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Top'))    g('Shutter Top',   partOf('Shutter Top'),   [{len:shutCutW,cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[{len:shutCutH,cnt:nSh*qty}]);
+    if(hasSection(series,'Outer Bottom')) g('Outer Bottom',partOf('Outer Bottom'),[{len:_cut(OW,'Outer Bottom'),cnt:1*qty}]);
+    if(hasSection(series,'Outer Top'))    g('Outer Top',   partOf('Outer Top'),   [{len:_cut(OW,'Outer Top'),   cnt:1*qty}]);
+    if(hasSection(series,'Outer Height')) g('Outer Height',partOf('Outer Height'),[{len:_cut(OH,'Outer Height'),cnt:2*qty}]);
+    // Shutter cuts
+    if(hasSection(series,'Shutter Bottom')) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:_cut(SW,'Shutter Bottom'),cnt:nSh*qty}]);
+    if(hasSection(series,'Shutter Top'))    g('Shutter Top',   partOf('Shutter Top'),   [{len:_cut(SW,'Shutter Top'),   cnt:nSh*qty}]);
+    if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[{len:_cut(SH,'Shutter Height'),cnt:nSh*qty}]);
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
     const _ilMult=_ilDbl?2:1;
     if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
-    if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[{len:rup(OH*FT_MM)-_netDedH,cnt:2*qty},{len:rup(SW*FT_MM)-_netDedW,cnt:nSh*qty}]);
+    if(w.netting && hasSection(series,'Net')) g('Netting',partOf('Net'),[{len:_cut(OH,'Net'),cnt:2*qty},{len:_cut(SW,'Net'),cnt:nSh*qty}]);
   } else {
     const {g:gv,des}=resolveG(w,series);
     const isFixed=(w.wtype||'casement')==='fixed';
@@ -4467,20 +4450,12 @@ function prodGroups(w){
       if(!hasSection(series,sec)) return;
       if(!expr){
         /* fallback for fixed windows with no outer formula: 2×OH + 2×OW */
-        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _od=profileDed(partOf('Outer'),'outer'); if(OH>0&&OW>0) g('Outer',partOf('Outer'),[{len:rup(OH*FT_MM)-_od,cnt:2*qty},{len:rup(OW*FT_MM)-_od,cnt:2*qty}]); }
+        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_od=partRowDed(series,_op); if(OH>0&&OW>0) g('Outer',_op,[{len:rup(OH*FT_MM)+_od,cnt:2*qty},{len:rup(OW*FT_MM)+_od,cnt:2*qty}]); }
         return;
       }
-      /* Cascade: Outer ded, then Shutter = Outer+Shutter, Bidding = Outer+Shutter+Bidding */
       const _secPart = partOf(sec);
-      const _outerD = profileDed(partOf('Outer'),'outer');
-      const _shutD  = profileDed(partOf('Shutter'),'shutter');
-      const _bidD   = profileDed(partOf('Bidding'),'bidding');
-      const _secDed = (sec==='Outer'||sec==='Divider') ? _outerD
-                    : sec==='Shutter' ? (_outerD+_shutD)
-                    : sec==='Bidding' ? (_outerD+_shutD+_bidD)
-                    : sec==='Net'     ? profileDed(_secPart,'netting')
-                    : 0;
-      const merged={}; sectionPieces(expr,gv,series).forEach(p=>{ const L=rup(p.len*FT_MM)-_secDed, c=p.cnt*qty; if(L>0&&c>0) merged[L]=(merged[L]||0)+c; });
+      const _secDed = partRowDed(series, _secPart);
+      const merged={}; sectionPieces(expr,gv,series).forEach(p=>{ const L=rup(p.len*FT_MM)+_secDed, c=p.cnt*qty; if(L>0&&c>0) merged[L]=(merged[L]||0)+c; });
       g(sec==='Net'?'Netting':sec, _secPart, Object.entries(merged).map(([L,c])=>({len:+L,cnt:c})));
     });
   }
@@ -5152,36 +5127,27 @@ function renderRates(){
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty: enter a number (fixed per window) or use <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft, <code>outer_perim</code> = 2×(OH+OW) rft.</div>
      <div id="slideHWTable" style="overflow:auto"></div>
    </div>
-   <div class="card" style="margin-top:16px">
-     <div class="hd"><b>Profile Cut Deductions <span class="muted" style="font-weight:400;font-size:12px">(mm — cascade)</span></b>
-       <button class="sm" onclick="addProfileDeduct()">+ Add Profile</button>
-     </div>
-     <div class="bd muted" style="font-size:11.5px;padding:8px 16px 4px">
-       Cascade formula: <b>Outer</b> cut = Opening − Outer ded &nbsp;·&nbsp; <b>Shutter</b> cut = Outer cut − Shutter ded &nbsp;·&nbsp; <b>Bidding</b> cut = Shutter cut − Bidding ded.<br>
-       Profile name must match the Part No. in Aluminium Profiles exactly (e.g. DC-26AK, M-24, D54A). Enter 0 for no deduction.
-     </div>
-     <div id="profileDedTable" style="overflow:auto"></div>
-   </div>`;
+`;
   renderSysTable();
   renderHandleAccTable();
   renderCasHWTable();
   renderSlideHWTable();
-  renderProfileDedTable();
 }
 const ALL_SECTIONS=['Outer','Outer Bottom','Outer Top','Outer Height','Shutter','Shutter Bottom','Shutter Top','Shutter Height','Interlock','Divider','Bidding','Net'];
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
   const parts=DB.rates.systems[sys], fins=SEED.finishes;
   const secOpts=ALL_SECTIONS.map(s=>`<option value="${s}">${s}</option>`).join('');
-  document.getElementById('sysTable').innerHTML=`<table><thead><tr><th>Part No.</th><th>Width</th><th>Section</th>${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
+  document.getElementById('sysTable').innerHTML=`<table><thead><tr><th>Part No.</th><th>Width</th><th>Section</th><th class="right" title="+N adds Nmm to opening, -N subtracts Nmm. Each row independent.">Cut Adj (mm)</th>${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
    <tbody>${parts.map((p,i)=>`<tr>
      <td><input style="max-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
      <td><input style="max-width:80px" value="${esc(p.width||'')}" placeholder="e.g. 75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
      <td><select style="max-width:140px" onchange="setSysPartField('${jsq(sys)}',${i},'section',this.value)">${ALL_SECTIONS.map(s=>`<option ${p.section===s?'selected':''}>${s}</option>`).join('')}</select></td>
+     <td class="right"><input type="number" style="max-width:68px;text-align:right" value="${p.cutDed??0}" title="+N adds Nmm to cut length, -N subtracts Nmm" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
      ${fins.map(f=>`<td class="right"><input style="max-width:90px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
      <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
-function setSysPartField(sys,i,field,v){ DB.rates.systems[sys][i][field]=v.trim(); save(); toast('Saved'); }
+function setSysPartField(sys,i,field,v){ if(field==='cutDed') DB.rates.systems[sys][i][field]=+v; else DB.rates.systems[sys][i][field]=(typeof v==='string'?v.trim():v); save(); toast('Saved'); }
 function setPartRate(sys,i,fin,v){ const p=DB.rates.systems[sys][i]; if(v==='')delete p.rates[fin]; else p.rates[fin]=num(v); save(); toast('Saved'); }
 function addSysPart(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
@@ -5251,30 +5217,6 @@ function addSlideHWItem(){
   save(); renderSlideHWTable();
 }
 function addGlass(){ DB.rates.glass.push({name:'New glass',cat:'Solar Control',thickness:'',rate:0}); save(); renderRates(); }
-function _ded(){ if(!DB.rates.interlock) DB.rates.interlock={}; if(!DB.rates.interlock.cutDeductMM) DB.rates.interlock.cutDeductMM={}; return DB.rates.interlock.cutDeductMM; }
-function renderProfileDedTable(){
-  const tbl=document.getElementById('profileDedTable'); if(!tbl) return;
-  const entries=Object.entries(_ded());
-  if(!entries.length){ tbl.innerHTML='<div class="muted" style="padding:12px">No profiles yet — click + Add Profile to start.</div>'; return; }
-  tbl.innerHTML=`<table><thead><tr><th>Profile (Part No.)</th><th class="right">Outer (mm)</th><th class="right">Shutter (mm)</th><th class="right">Bidding (mm)</th><th class="right">Netting (mm)</th><th></th></tr></thead><tbody>
-    ${entries.map(([k,v])=>`<tr>
-      <td><input style="max-width:120px;font-weight:600" value="${esc(k)}" onchange="renameProfileDed('${jsq(k)}',this.value)"></td>
-      <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${v.outer??0}" onchange="setProfileDed('${jsq(k)}','outer',this.value)"></td>
-      <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${v.shutter??0}" onchange="setProfileDed('${jsq(k)}','shutter',this.value)"></td>
-      <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${v.bidding??0}" onchange="setProfileDed('${jsq(k)}','bidding',this.value)"></td>
-      <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${v.netting??0}" onchange="setProfileDed('${jsq(k)}','netting',this.value)"></td>
-      <td><button class="ghost sm danger" onclick="delProfileDed('${jsq(k)}')">✕</button></td></tr>`).join('')}
-  </tbody></table>`;
-}
-function setProfileDed(k,field,v){ const _d=_ded(); if(!_d[k]) _d[k]={}; _d[k][field]=num(v); save(); toast('Saved'); }
-function renameProfileDed(oldK,newK){ newK=newK.trim(); if(!newK||newK===oldK) return; const _d=_ded(); _d[newK]=_d[oldK]; delete _d[oldK]; save(); renderProfileDedTable(); }
-function delProfileDed(k){ if(!confirm('Remove cut deductions for '+k+'?')) return; delete _ded()[k]; save(); renderProfileDedTable(); }
-function addProfileDeduct(){
-  const name=prompt('Enter profile Part No. (e.g. DC-26AK):'); if(!name||!name.trim()) return;
-  const k=name.trim(); const _d=_ded();
-  if(!_d[k]) _d[k]={outer:0,shutter:0,bidding:0,netting:0};
-  save(); renderProfileDedTable();
-}
 function addSpacer(){ DB.rates.spacers.push({size:'New',rate:0}); save(); renderRates(); }
 function addAccessory(){ const n='New Accessory '+Date.now().toString().slice(-4); DB.rates.accessories[n]={category:'Hardware',unit:'pc',rate:0,applyTo:'—',qtyType:'—'}; save(); renderRates(); }
 function delAcc(k){ if(!confirm('Remove "'+k+'" from accessories?'))return; delete DB.rates.accessories[k]; save(); renderRates(); }
