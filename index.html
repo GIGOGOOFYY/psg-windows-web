@@ -4346,21 +4346,29 @@ function calcWindow(w){
     // ---- sliding-specific hardware from Rates ----
     const nSh2=num(w.nShutters)||2;
     const shutPerim=2*(SH+SW)*nSh2, outerPerim=2*(OH+OW);
+    const netPerim=w.netting?2*(SH+SW)*nSh2:0;
+    // Evaluate qty formula: number, or "outer_perim", "shutter_perim", "net_perim"
+    // optionally with a multiplier: "outer_perim*6", "shutter_perim*4", "net_perim*2", etc.
+    const evalQty=(qty)=>{
+      if(typeof qty==='number') return qty;
+      const s=String(qty).replace(/\s/g,'');
+      const m=s.match(/^(outer_perim|shutter_perim|net_perim)(?:[*x]([\d.]+))?$/i);
+      if(!m) return num(s)||0;
+      const base=m[1].toLowerCase()==='outer_perim'?outerPerim:m[1].toLowerCase()==='shutter_perim'?shutPerim:netPerim;
+      return base*(m[2]?parseFloat(m[2]):1);
+    };
     const slideHW=((DB.rates.slidingHardware||{})[series]||(SEED.slidingHardware||{})[series]||[]).filter(it=>it.name!=='Latch Lock');
     slideHW.forEach(item=>{
       if(item.onlyNet && !w.netting) return;
-      const q=typeof item.qty==='number'?item.qty:
-              item.qty==='shutter_perim'?shutPerim:
-              item.qty==='outer_perim'?outerPerim:0;
+      if(item.widthFilter && item.widthFilter!==(w.width||'')) return;
+      const q=evalQty(item.qty);
       if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
     });
     // ---- casement/awning-specific hardware from Rates ----
     if(wtype==='casement'||wtype==='awning'){
       const casHW=((DB.rates.casementHardware||{})[series]||[]);
       casHW.forEach(item=>{
-        const q=typeof item.qty==='number'?item.qty:
-                item.qty==='shutter_perim'?shutPerim:
-                item.qty==='outer_perim'?outerPerim:0;
+        const q=evalQty(item.qty);
         if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
       });
     }
@@ -5113,7 +5121,7 @@ function renderRates(){
        <select id="casHWSel" onchange="renderCasHWTable()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addCasHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Extra hardware items added per casement/awning window, beyond handles and hinges. Qty: a number (fixed per window) or <code>shutter_perim</code> = 2×(SH+SW) rft, <code>outer_perim</code> = 2×(OH+OW) rft.</div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Extra hardware items added per casement/awning window, beyond handles and hinges. Qty: a number, or <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW) rft. Add a multiplier: e.g. <code>outer_perim*6</code>, <code>shutter_perim*4</code>.</div>
      <div id="casHWTable" style="overflow:auto"></div>
    </div>
    <div class="card" style="margin-top:16px">
@@ -5121,7 +5129,7 @@ function renderRates(){
        <select id="slideHWSel" onchange="renderSlideHWTable()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty: enter a number (fixed per window) or use <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft, <code>outer_perim</code> = 2×(OH+OW) rft.</div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty: enter a number, or use <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft, <code>net_perim</code> = same as shutter_perim. Add a multiplier with × or *: e.g. <code>outer_perim*6</code>, <code>shutter_perim*4</code>.</div>
      <div id="slideHWTable" style="overflow:auto"></div>
    </div>
 `;
@@ -5140,16 +5148,16 @@ function renderSysTable(){
     return `<label style="display:inline-flex;align-items:center;gap:3px;margin:2px 4px 2px 0;font-size:11.5px;white-space:nowrap;cursor:pointer">
       <input type="checkbox" ${chk} style="width:13px;height:13px" onchange="toggleSysSection('${jsq(sys)}',${i},'${s}',this.checked)">${s}</label>`;
   }).join('');
-  document.getElementById('sysTable').innerHTML=`<table style="min-width:780px"><thead><tr>
-    <th style="min-width:110px">Part No.</th><th style="min-width:62px">Width</th>
-    <th title="+N adds Nmm to cut length; -N subtracts. Per part — collar box vs box series can differ.">Cut Adj<br><span style="font-weight:400;font-size:10px">+mm / −mm</span></th>
-    <th>Sections used (tick all that apply)</th>
-    ${fins.map(f=>`<th class="right">${f}</th>`).join('')}<th></th></tr></thead>
+  document.getElementById('sysTable').innerHTML=`<table style="width:100%;min-width:1100px;table-layout:auto"><thead><tr>
+    <th style="min-width:120px">Part No.</th><th style="min-width:65px">Width</th>
+    <th style="min-width:70px" title="+N adds Nmm to cut length; -N subtracts. Per part — collar box vs box series can differ.">Cut Adj<br><span style="font-weight:400;font-size:10px">+mm / −mm</span></th>
+    <th style="min-width:300px">Sections used (tick all that apply)</th>
+    ${fins.map(f=>`<th class="right" style="min-width:72px">${f}</th>`).join('')}<th style="width:36px"></th></tr></thead>
    <tbody>${parts.map((p,i)=>`<tr>
-     <td><input style="width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
+     <td><input style="width:100%;min-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
      <td><input style="width:62px" value="${esc(p.width||'')}" placeholder="75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
      <td class="right"><input type="number" style="width:58px;text-align:right" value="${p.cutDed??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
-     <td style="min-width:320px">${secChips(p,i)}</td>
+     <td style="min-width:300px">${secChips(p,i)}</td>
      ${fins.map(f=>`<td class="right"><input style="max-width:80px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
      <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
@@ -5210,12 +5218,14 @@ function renderSlideHWTable(){
   if(!DB.rates.slidingHardware[sys]) DB.rates.slidingHardware[sys]=[];
   const items=DB.rates.slidingHardware[sys];
   const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q;
-  document.getElementById('slideHWTable').innerHTML=items.length?`<table><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th>Net only</th><th></th></tr></thead><tbody>
+  const widthOpts=['','75mm','95mm','100mm'].map(w=>`<option value="${w}">${w||'All widths'}</option>`).join('');
+  document.getElementById('slideHWTable').innerHTML=items.length?`<table><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Leave blank to apply to all profile widths. Set e.g. 100mm to apply only when that width is used.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th>Net only</th><th></th></tr></thead><tbody>
   ${items.map((it,i)=>`<tr>
-    <td><input style="min-width:180px" value="${esc(it.name||'')}" onchange="shwSet('${sys}',${i},'name',this.value)"></td>
-    <td><input style="max-width:120px" value="${esc(String(it.qty??2))}" placeholder="2 or shutter_perim" onchange="shwSet('${sys}',${i},'qty',this.value)"></td>
+    <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="shwSet('${sys}',${i},'name',this.value)"></td>
+    <td><input style="max-width:130px" value="${esc(String(it.qty??2))}" placeholder="2 or outer_perim*6" onchange="shwSet('${sys}',${i},'qty',this.value)"></td>
     <td><select style="max-width:70px" onchange="shwSet('${sys}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
-    <td class="right"><input type="number" style="max-width:90px;text-align:right" value="${it.rate||0}" onchange="shwSet('${sys}',${i},'rate',+this.value)"></td>
+    <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${it.rate||0}" onchange="shwSet('${sys}',${i},'rate',+this.value)"></td>
+    <td><select style="max-width:90px" onchange="shwSet('${sys}',${i},'widthFilter',this.value)">${['','75mm','95mm','100mm'].map(w=>`<option value="${w}" ${(it.widthFilter||'')===(w)?'selected':''}>${w||'All'}</option>`).join('')}</select></td>
     <td style="text-align:center"><input type="checkbox" ${it.onlyNet?'checked':''} onchange="shwSet('${sys}',${i},'onlyNet',this.checked)"></td>
     <td><button class="ghost sm danger" onclick="shwDel('${sys}',${i})">✕</button></td>
   </tr>`).join('')}</tbody></table>`:'<div class="muted" style="padding:12px">No items — click + Add Item</div>';
