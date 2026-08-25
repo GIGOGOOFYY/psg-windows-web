@@ -5176,7 +5176,7 @@ const SEC_GROUPS=[
 ];
 const ALL_SECTIONS=SEC_GROUPS.flatMap(([,s])=>s);
 // Width options available for system profiles
-const SYS_WIDTHS=['75mm','95mm','100mm','127mm'];
+const SYS_WIDTHS=['50mm','65mm','75mm','95mm','100mm','127mm'];
 
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
@@ -5209,7 +5209,7 @@ function renderSysTable(){
   document.getElementById('sysTable').innerHTML=`<table style="width:100%;min-width:1200px;table-layout:auto">
     <thead><tr>
       <th style="min-width:120px">Part No.</th>
-      <th style="text-align:center" colspan="${SYS_WIDTHS.length}">Width<br><span style="font-weight:400;font-size:10px">${SYS_WIDTHS.map(w=>w.replace('mm','')).join(' / ')}</span></th>
+      <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${SYS_WIDTHS.map(w=>w.replace('mm','')).join(' / ')}</span></th>
       <th style="min-width:62px;text-align:right" title="Height member cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Height</span></th>
       <th style="min-width:62px;text-align:right" title="Width member (bottom/top) cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Width</span></th>
       <th style="min-width:340px">Sections Used</th>
@@ -5218,7 +5218,7 @@ function renderSysTable(){
     </tr></thead>
     <tbody>${np.map((p,i)=>`<tr>
       <td><input style="width:100%;min-width:110px;font-weight:600" value="${esc(p.part)}" placeholder="Part No." onchange="setSysPartField('${jsq(sys)}',${i},'part',this.value)"></td>
-      <td colspan="${SYS_WIDTHS.length}" style="white-space:nowrap;padding:4px 6px">
+      <td style="white-space:nowrap;padding:4px 6px">
         <div style="display:flex;gap:6px;justify-content:center">${widthCks(p,i)}</div></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedH??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedH',+this.value)"></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedW??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedW',+this.value)"></td>
