@@ -5013,12 +5013,16 @@ function openCataloguePicker(){ showModal(`<div class="hd"><h3>Add window from c
 /* ---------- Rates ---------- */
 function syncSeedParts(){
   // Add any SEED parts not yet in user's DB so they appear in Rates and can be priced
+  // Respects DB.rates.systemsDeleted — parts the user explicitly deleted are never re-added
+  if(!DB.rates.systemsDeleted) DB.rates.systemsDeleted={};
   let changed=false;
   Object.entries(SEED.systems).forEach(([sys,seedParts])=>{
     if(!DB.rates.systems[sys]) return;
     const dbKeys=new Set(DB.rates.systems[sys].map(p=>p.part+'|'+(p.width||'')));
+    const deleted=new Set(DB.rates.systemsDeleted[sys]||[]);
     seedParts.forEach(sp=>{
-      if(!dbKeys.has(sp.part+'|'+(sp.width||''))){
+      const key=sp.part+'|'+(sp.width||'');
+      if(!dbKeys.has(key) && !deleted.has(key)){
         DB.rates.systems[sys].push({part:sp.part,width:sp.width,sections:sp.section?[sp.section]:(sp.sections||[]),rates:{}});
         changed=true;
       }
@@ -5183,7 +5187,17 @@ function addSysPart(){
   /* scroll to bottom of table */
   const t=document.getElementById('sysTable'); if(t) t.scrollTop=t.scrollHeight;
 }
-function delSysPart(sys,i){ if(!confirm('Remove this part from '+sys+'?'))return; DB.rates.systems[sys].splice(i,1); save(); renderSysTable(); }
+function delSysPart(sys,i){
+  if(!confirm('Remove this part from '+sys+'?'))return;
+  const p=DB.rates.systems[sys][i];
+  if(p){
+    const key=p.part+'|'+(p.width||'');
+    if(!DB.rates.systemsDeleted) DB.rates.systemsDeleted={};
+    if(!DB.rates.systemsDeleted[sys]) DB.rates.systemsDeleted[sys]=[];
+    if(!DB.rates.systemsDeleted[sys].includes(key)) DB.rates.systemsDeleted[sys].push(key);
+  }
+  DB.rates.systems[sys].splice(i,1); save(); renderSysTable();
+}
 function renderCasHWTable(){
   const sys=val('casHWSel')||'ECONOMY';
   if(!DB.rates.casementHardware) DB.rates.casementHardware={};
