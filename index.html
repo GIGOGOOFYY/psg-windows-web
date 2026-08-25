@@ -5158,7 +5158,7 @@ function renderSysTable(){
      <td><input style="width:62px" value="${esc(p.width||'')}" placeholder="75mm" onchange="setSysPartField('${jsq(sys)}',${i},'width',this.value)"></td>
      <td class="right"><input type="number" style="width:58px;text-align:right" value="${p.cutDed??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDed',+this.value)"></td>
      <td style="min-width:300px">${secChips(p,i)}</td>
-     ${fins.map(f=>`<td class="right"><input style="max-width:80px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
+     ${fins.map(f=>`<td class="right"><input style="width:72px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
      <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td></tr>`).join('')}</tbody></table>`;
 }
 function toggleSysSection(sys,i,sec,checked){
