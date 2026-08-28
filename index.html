@@ -4176,7 +4176,26 @@ function modelsFor(brand,lockType,wtype){
   const seedFiltered = wtype ? seedM.filter(()=>{ const wt=inferWinType(lockType||''); return wt==='both'||wt===wtype; }) : seedM;
   return [...new Set([...seedFiltered,...dbM])];
 }
-function hingesFor(series){ return IL.hinges[series]||[]; }
+// Items stored in DB.rates.hinges that are accessories (not real hinge types) — excluded from dropdown
+const HINGE_ACCESSORY_KEYS=['FC-310'];
+function hingesFor(series){
+  const seed=IL.hinges[series]||[];
+  // also include user-added hinges from DB.rates.hinges (filtered to casement/both winType)
+  // exclude accessory keys like FC-310 which are peg stays added automatically, not selectable hinge types
+  const db=Object.keys(DB.rates.hinges||{}).filter(k=>{
+    if(HINGE_ACCESSORY_KEYS.includes(k)) return false;
+    const m=getHingeMeta(k); return m.winType==='casement'||m.winType==='both'||!m.winType;
+  });
+  return [...new Set([...seed,...db])];
+}
+function lockTypesFor(wtype){
+  const seed=IL.lockTypes[wtype]||[];
+  // also include lock types from user-added DB handles matching this window type
+  const db=[...new Set(Object.values(DB.rates.handleMeta||{})
+    .filter(m=>m.lockType && (m.winType===wtype||m.winType==='both'||(!m.winType&&wtype==='casement')))
+    .map(m=>m.lockType))];
+  return [...new Set([...seed,...db])];
+}
 function widthsFor(series){ return SEED.widths[rateSeries(series)]||[]; }
 function hasRates(series){ return !!SEED.systemsHaveRates[rateSeries(series)]; }
 function glassChoices(glazing){ const cats=(glazing==='Single')?SEED.singleCats:SEED.glassCats;
@@ -4280,6 +4299,17 @@ function partRate(part,finish){ if(!part) return 0; const r=part.rates||{};
   return num(r[finish] ?? r['Natural'] ?? Object.values(r)[0] ?? 0); }
 function isUrban(s){ return s==='URBAN'||s==='URBAN_PLUS'; }
 
+function winIncomplete(w){
+  // Returns a reason string if the window is missing required fields, otherwise null
+  const wtype=w.wtype||'casement';
+  const {g}=resolveG(w,w.series);
+  const OH=num(g[4]), OW=num(g[5]);
+  if(!OH||!OW) return 'Opening height and width are required';
+  if(!w.series) return 'Series is required';
+  if(!w.width) return 'Profile width is required';
+  if(wtype!=='fixed' && !w.lockType) return 'Lock type is required';
+  return null;
+}
 function calcWindow(w){
   const wtype=w.wtype||'casement';
   const finish=w.finish||'Natural', series=w.series;
@@ -4342,14 +4372,11 @@ function calcWindow(w){
     if(w.handle){ const hLabel=[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', '); addHw(hLabel,hq,hr,'pc',w.handle);
       const accs=(DB.rates.handleAccessories||{})[w.handle]||[];
       accs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*hq, a.rate||0, a.unit||'pc'); }); }
-    let rubberLen = isUrban(series)?shutLen : (series==='ECONOMY'?(bidLen+shutLen)*2:(bidLen*2)+shutLen);
-    addHw('Glass Rubber',rubberLen,accRate('Glass Rubber'),'rft');
-    addHw('Angle',3,accRate('Angle'),'rft');
     if(wtype!=='sliding' && num(w.brush)>0) addHw('Brush',num(w.brush),accRate('Brush'),'rft');
-    if(w.hinge==='J3'||w.hinge==='J4') addHw('Peg Stay (FC-310)',1,accRate('FC-310'),'pc');
-    if(wtype==='casement' && w.hinge){
+    if(w.hinge==='J3'||w.hinge==='J4') addHw('Peg Stay (FC-310)',1,num((DB.rates.hinges||{})['FC-310']||accRate('FC-310')),'pc');
+    if((wtype==='casement'||wtype==='awning') && w.hinge){
       let hq2 = w.hinge==='HC-320'?2:(OH<=5?3:(OH<=8?4:5));
-      addHw('Hinges ('+w.hinge+')',hq2,num(DB.rates.hinges[w.hinge]||accRate(w.hinge)),'pc');
+      addHw('Hinges ('+w.hinge+')',hq2,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
     }
     if(w.netting) addHw('Net ('+w.netting+')',SH*SW,accRate(w.netting),'Sft');
     // ---- sliding-specific hardware from Rates ----
@@ -4382,9 +4409,7 @@ function calcWindow(w){
       });
     }
   }
-  addHw('Labor',area,accRate('Labor'),'Sft');
-  addHw('Silicon',1,accRate('Silicon'),'pc');
-  if(wtype!=='fixed' && wtype!=='sliding') addHw('Window Hardware',area,accRate('Window hardware'),'Sft');
+  // Labor, Silicon, Window Hardware: no longer hardcoded — add them via Rates → Accessories with applyTo set
   // ---- auto-apply accessories (user-configured via Rates panel) ----
   Object.entries(DB.rates.accessories).forEach(([name,acc])=>{
     const at=acc.applyTo||'—'; const qt=acc.qtyType||'—';
@@ -4687,7 +4712,7 @@ function winFormHTML(w,r){
   const bind=`oninput="upd('${w.id}',this)" onchange="upd('${w.id}',this)"`;
   const seriesList=seriesFor(wtype,w.thermal||'NO');
   const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series);
-  const widths=widthsFor(w.series), locks=IL.lockTypes[wtype]||[];
+  const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
   const isFixed=wtype==='fixed', isSlide=wtype==='sliding', isCase=wtype==='casement';
   const isDouble=(w.glazing==='Double');
   const thkList=IL.glassThk[w.glazing||'Single']||[], typeList=glassChoices(w.glazing||'Single'), spacerList=spacerChoices();
@@ -4759,6 +4784,15 @@ function winFormHTML(w,r){
    <div class="bd-wrap">${breakdownHTML(r,w.id)}</div>`;
 }
 function breakdownHTML(r,wid){
+  // show incomplete warning if window is missing required fields
+  if(wid){
+    const q=curr(), w=q&&q.windows.find(x=>x.id===wid);
+    if(w){
+      const reason=winIncomplete(w);
+      if(reason) return `<div class="card" style="margin-top:8px;border-left:3px solid #e07b00;padding:14px 18px;color:#b35900;background:var(--bg2)">
+        <b>⚠ Window incomplete</b> — ${esc(reason)}<br><span style="font-size:11.5px;opacity:.8">Fill in all required fields above to see pricing.</span></div>`;
+    }
+  }
   const profileCell=s=>{
     if((s.options||[]).length>1 && wid) return `<select onchange="pickPartFor('${wid}','${jsq(s.section)}',this.value)" style="max-width:150px;padding:2px 6px;font-size:12px;display:inline-block;width:auto">${s.options.map(o=>`<option ${o===s.part?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
     return esc(s.part);
@@ -4800,7 +4834,7 @@ function upd(id,el){
   else w[k]= el.type==='number'?(el.value===''?'':num(el.value)):el.value;
   // cascade resets
   if(k==='category'){ w.wtype=typeFor(w.value=el.value); if(w.wtype==='sliding')w.thermal='NO';
-    const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(IL.lockTypes[w.wtype]||[])[0]||''; w.handleBrand='';w.handle='';w.hinge=''; }
+    const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(lockTypesFor(w.wtype)||[])[0]||''; w.handleBrand='';w.handle='';w.hinge=''; }
   if(k==='thermal'){ const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.handleBrand='';w.handle=''; w.hinge=''; }
   if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series).includes(w.hinge))w.hinge=''; }
   if(k==='width'){ w.picks={}; }
