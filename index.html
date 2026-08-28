@@ -4366,6 +4366,22 @@ function calcWindow(w){
   const addHw=(label,qty,rate,unit,note)=>{ const amt=qty*rate; if(amt||qty) hw.push({label,qty:+qty,rate,unit:unit||'pc',amount:amt,note:note||''}); };
   const bidLen = wtype==='sliding'?(isUrban(series)?0:per_open):dsSec.bidding;
   const shutLen = wtype==='sliding'?per_shut:dsSec.shutter;
+  // ---- shared qty formula evaluator (all window types) ----
+  const nSh2=num(w.nShutters)||2;
+  const shutPerim=2*(SH+SW)*nSh2, outerPerim=2*(OH+OW);
+  const netPerim=w.netting?2*(SH+SW)*nSh2:0;
+  const outerAreaSft=area; // OH×OW in sqft
+  const shutAreaSft=(SH*SW*_nShCalc)/92903.04; // SH×SW×shutters in sqft
+  // Formulas: outer_perim, shutter_perim, net_perim, outer_area, shutter_area — optional *multiplier
+  const evalQty=(qty)=>{
+    if(typeof qty==='number') return qty;
+    const s=String(qty).replace(/\s/g,'');
+    const m=s.match(/^(outer_perim|shutter_perim|net_perim|outer_area|shutter_area)(?:[*x]([\d.]+))?$/i);
+    if(!m) return num(s)||0;
+    const kw=m[1].toLowerCase();
+    const base=kw==='outer_perim'?outerPerim:kw==='shutter_perim'?shutPerim:kw==='net_perim'?netPerim:kw==='outer_area'?outerAreaSft:shutAreaSft;
+    return base*(m[2]?parseFloat(m[2]):1);
+  };
   if(wtype!=='fixed'){
     const hr=w.handle?num(DB.rates.handles[w.handle]||0):0;
     const hq=(w.handleQty===0||w.handleQty==='0')?0:(num(w.handleQty)||1);
@@ -4380,19 +4396,6 @@ function calcWindow(w){
     }
     if(w.netting) addHw('Net ('+w.netting+')',SH*SW,accRate(w.netting),'Sft');
     // ---- sliding-specific hardware from Rates ----
-    const nSh2=num(w.nShutters)||2;
-    const shutPerim=2*(SH+SW)*nSh2, outerPerim=2*(OH+OW);
-    const netPerim=w.netting?2*(SH+SW)*nSh2:0;
-    // Evaluate qty formula: number, or "outer_perim", "shutter_perim", "net_perim"
-    // optionally with a multiplier: "outer_perim*6", "shutter_perim*4", "net_perim*2", etc.
-    const evalQty=(qty)=>{
-      if(typeof qty==='number') return qty;
-      const s=String(qty).replace(/\s/g,'');
-      const m=s.match(/^(outer_perim|shutter_perim|net_perim)(?:[*x]([\d.]+))?$/i);
-      if(!m) return num(s)||0;
-      const base=m[1].toLowerCase()==='outer_perim'?outerPerim:m[1].toLowerCase()==='shutter_perim'?shutPerim:netPerim;
-      return base*(m[2]?parseFloat(m[2]):1);
-    };
     const slideHW=((DB.rates.slidingHardware||{})[series]||(SEED.slidingHardware||{})[series]||[]).filter(it=>it.name!=='Latch Lock');
     slideHW.forEach(item=>{
       if(item.onlyNet && !w.netting) return;
@@ -4412,10 +4415,11 @@ function calcWindow(w){
   // Labor, Silicon, Window Hardware: no longer hardcoded — add them via Rates → Accessories with applyTo set
   // ---- auto-apply accessories (user-configured via Rates panel) ----
   Object.entries(DB.rates.accessories).forEach(([name,acc])=>{
-    const at=acc.applyTo||'—'; const qt=acc.qtyType||'—';
-    if(at==='—'||qt==='—') return;
+    const at=acc.applyTo||'—'; const qt=(acc.qtyType||'—').trim();
+    if(at==='—'||qt==='—'||qt==='') return;
     if(at!=='All' && at.toLowerCase()!==wtype) return;
-    const q=qt==='per Sft'?area:qt==='per Rft perim'?2*(OH+OW):1;
+    // backward compat for old dropdown values; otherwise treat qt as a formula string
+    const q=qt==='per Sft'?outerAreaSft:qt==='per Rft perim'?outerPerim:qt==='× 1 pc'?1:evalQty(qt);
     if(q>0) addHw(name,q,num(acc.rate),acc.unit||'pc');
   });
   // glass panes + spacer (priced from glass rate table, by type + thickness)
@@ -5114,7 +5118,7 @@ function renderRates(){
     <div class="muted">Edit any rate — saves automatically and drives all quotes.</div>
     <button class="ghost sm danger" onclick="if(confirm('Reset ALL rates to workbook defaults?')){resetRates();renderRates();}">Reset to defaults</button></div>
    <div class="card" style="margin-bottom:16px"><div class="hd"><b>Accessories & Hardware</b><button class="sm" onclick="addAccessory()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto">
-     <table><thead><tr><th>Item</th><th>Category</th><th>Unit</th><th class="right">Rate (Rs)</th><th>Apply To</th><th>Qty Type</th><th></th></tr></thead><tbody>
+     <table><thead><tr><th>Item</th><th>Category</th><th>Unit</th><th class="right">Rate (Rs)</th><th>Apply To</th><th title="Qty formula. Use: 1, outer_area, shutter_area, outer_perim, shutter_perim, net_perim — or with multiplier e.g. outer_area*1.1. Leave — to skip.">Qty Formula</th><th></th></tr></thead><tbody>
      ${Object.entries(DB.rates.accessories).map(([k,v])=>`<tr>
        <td><input style="max-width:140px" value="${esc(k)}" onchange="renameAcc('${jsq(k)}',this.value)"></td>
        <td class="muted"><input style="max-width:100px" value="${esc(v.category||'')}" onchange="DB.rates.accessories['${jsq(k)}'].category=this.value;save()"></td>
@@ -5123,10 +5127,13 @@ function renderRates(){
        <td class="right"><input style="max-width:100px;text-align:right" type="number" value="${v.rate}" onchange="DB.rates.accessories['${jsq(k)}'].rate=num(this.value);save();toast('Saved')"></td>
        <td><select style="max-width:90px" onchange="DB.rates.accessories['${jsq(k)}'].applyTo=this.value;save()">
          ${['—','All','Casement','Sliding','Fixed','Awning'].map(t=>`<option ${(v.applyTo||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
-       <td><select style="max-width:100px" onchange="DB.rates.accessories['${jsq(k)}'].qtyType=this.value;save()">
-         ${['—','× 1 pc','per Sft','per Rft perim'].map(t=>`<option ${(v.qtyType||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
+       <td><input style="width:130px" value="${esc(v.qtyType||'—')}" placeholder="e.g. outer_area" title="Qty formula: 1, outer_area, shutter_area, outer_perim, shutter_perim, net_perim, or with multiplier e.g. outer_perim*6. Use — to disable." onchange="DB.rates.accessories['${jsq(k)}'].qtyType=this.value.trim();save();toast('Saved')"></td>
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
-     </tbody></table></div></div>
+     </tbody></table>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">
+       Qty Formula — type directly: <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> (2×(OH+OW) rft) · <code>shutter_perim</code> (2×(SH+SW)×shutters rft) · <code>net_perim</code> · with multiplier: <code>outer_area*1.1</code> · <code>—</code> = disabled
+     </div>
+     </div></div>
    <div class="f2">
      <div class="card"><div class="hd"><b>Handles</b><button class="sm" onclick="addHandle()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>Model</th><th>Brand</th><th>Lock Type</th><th>Window Type</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
        ${Object.entries(DB.rates.handles).map(([k,v])=>{ const hm=getHandleMeta(k); const knownBrands=['KINLONG','KEVATA','HOPPO','CHINESE','LOCAL']; const knownLocks=['Multi Lock','Simple Lock','Push Lock','Latch Lock','Espag']; const wt=hm.winType||inferWinType(hm.lockType||''); return `<tr>
@@ -5182,7 +5189,7 @@ function renderRates(){
        <select id="casHWSel" onchange="renderCasHWTable()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addCasHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Extra hardware items added per casement/awning window, beyond handles and hinges. Qty: a number, or <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW) rft. Add a multiplier: e.g. <code>outer_perim*6</code>, <code>shutter_perim*4</code>.</div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Extra hardware items added per casement/awning window, beyond handles and hinges. Qty formulas: <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW) rft, <code>outer_area</code> = OH×OW Sft, <code>shutter_area</code> = SH×SW Sft. Add a multiplier: e.g. <code>outer_perim*6</code>.</div>
      <div id="casHWTable" style="overflow:auto"></div>
    </div>
    <div class="card" style="margin-top:16px">
@@ -5190,7 +5197,10 @@ function renderRates(){
        <select id="slideHWSel" onchange="renderSlideHWTable()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty: enter a number, or use <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft, <code>net_perim</code> = same as shutter_perim. Add a multiplier with × or *: e.g. <code>outer_perim*6</code>, <code>shutter_perim*4</code>.</div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty formulas:<br>
+       <code>outer_perim</code> = 2×(OH+OW) rft &nbsp;·&nbsp; <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft &nbsp;·&nbsp; <code>net_perim</code> = same as shutter_perim<br>
+       <code>outer_area</code> = OH×OW in Sft &nbsp;·&nbsp; <code>shutter_area</code> = SH×SW×nShutters in Sft<br>
+       Add a multiplier: e.g. <code>outer_perim*6</code>, <code>outer_area*1.1</code></div>
      <div id="slideHWTable" style="overflow:auto"></div>
    </div>
 `;
@@ -5335,7 +5345,7 @@ function renderSlideHWTable(){
   if(!DB.rates.slidingHardware) DB.rates.slidingHardware={};
   if(!DB.rates.slidingHardware[sys]) DB.rates.slidingHardware[sys]=[];
   const items=DB.rates.slidingHardware[sys];
-  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q;
+  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q;
   const widthOpts=['','75mm','95mm','100mm'].map(w=>`<option value="${w}">${w||'All widths'}</option>`).join('');
   document.getElementById('slideHWTable').innerHTML=items.length?`<table><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Leave blank to apply to all profile widths. Set e.g. 100mm to apply only when that width is used.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th>Net only</th><th></th></tr></thead><tbody>
   ${items.map((it,i)=>`<tr>
