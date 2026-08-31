@@ -4368,18 +4368,27 @@ function calcWindow(w){
   const shutLen = wtype==='sliding'?per_shut:dsSec.shutter;
   // ---- shared qty formula evaluator (all window types) ----
   const nSh2=num(w.nShutters)||2;
+  // Net shutter count: sliding = nShutters/2 (1 net panel per 2 sliding panels); casement/awning = nShutters (each sash has its own net)
+  const netShutterCnt=w.netting?(wtype==='sliding'?Math.max(1,Math.round(nSh2/2)):nSh2):0;
   const shutPerim=2*(SH+SW)*nSh2, outerPerim=2*(OH+OW);
-  const netPerim=w.netting?2*(SH+SW)*nSh2:0;
+  const netPerim=w.netting?2*(SH+SW)*netShutterCnt:0;
   const outerAreaSft=area; // OH×OW in sqft
   const shutAreaSft=(SH*SW*_nShCalc)/92903.04; // SH×SW×shutters in sqft
-  // Formulas: outer_perim, shutter_perim, net_perim, outer_area, shutter_area — optional *multiplier
+  // net_area = SH×SW×netShutterCnt in sqft; net_height/net_width in rft
+  const netAreaSft=w.netting?(SH*SW*netShutterCnt)/92903.04:0;
+  const netHeightRft=w.netting?(SH/304.8)*netShutterCnt:0;
+  const netWidthRft=w.netting?(SW/304.8)*netShutterCnt:0;
+  // Formulas: keyword [* multiplier] — works in all HW tables for all window types
   const evalQty=(qty)=>{
     if(typeof qty==='number') return qty;
     const s=String(qty).replace(/\s/g,'');
-    const m=s.match(/^(outer_perim|shutter_perim|net_perim|outer_area|shutter_area)(?:[*x]([\d.]+))?$/i);
+    const m=s.match(/^(outer_perim|shutter_perim|net_perim|outer_area|shutter_area|net_area|net_height|net_width|net_count)(?:[*x]([\d.]+))?$/i);
     if(!m) return num(s)||0;
     const kw=m[1].toLowerCase();
-    const base=kw==='outer_perim'?outerPerim:kw==='shutter_perim'?shutPerim:kw==='net_perim'?netPerim:kw==='outer_area'?outerAreaSft:shutAreaSft;
+    const base=kw==='outer_perim'?outerPerim:kw==='shutter_perim'?shutPerim:kw==='net_perim'?netPerim
+      :kw==='outer_area'?outerAreaSft:kw==='shutter_area'?shutAreaSft
+      :kw==='net_area'?netAreaSft:kw==='net_height'?netHeightRft:kw==='net_width'?netWidthRft
+      :kw==='net_count'?netShutterCnt:0;
     return base*(m[2]?parseFloat(m[2]):1);
   };
   if(wtype!=='fixed'){
@@ -4394,11 +4403,13 @@ function calcWindow(w){
       let hq2 = w.hinge==='HC-320'?2:(OH<=5?3:(OH<=8?4:5));
       addHw('Hinges ('+w.hinge+')',hq2,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
     }
-    if(w.netting) addHw('Net ('+w.netting+')',SH*SW,accRate(w.netting),'Sft');
+    // Net material is now configured in the HW tables with netType filter — no hardcoded line
     // ---- sliding-specific hardware from Rates ----
     const slideHW=((DB.rates.slidingHardware||{})[series]||(SEED.slidingHardware||{})[series]||[]).filter(it=>it.name!=='Latch Lock');
     slideHW.forEach(item=>{
       if(item.onlyNet && !w.netting) return;
+      // netType filter: item applies only to matching netting type (or All / blank = any)
+      const nt=item.netType||''; if(nt && nt!=='All' && nt!==w.netting) return;
       if(item.widthFilter && item.widthFilter!==(w.width||'')) return;
       const q=evalQty(item.qty);
       if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
@@ -4407,6 +4418,8 @@ function calcWindow(w){
     if(wtype==='casement'||wtype==='awning'){
       const casHW=((DB.rates.casementHardware||{})[series]||[]);
       casHW.forEach(item=>{
+        if(item.onlyNet && !w.netting) return;
+        const nt=item.netType||''; if(nt && nt!=='All' && nt!==w.netting) return;
         const q=evalQty(item.qty);
         if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
       });
@@ -5141,7 +5154,8 @@ function renderRates(){
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
      </tbody></table>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">
-       Qty Formula — type directly: <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> (2×(OH+OW) rft) · <code>shutter_perim</code> (2×(SH+SW)×shutters rft) · <code>net_perim</code> · with multiplier: <code>outer_area*1.1</code> · <code>—</code> = disabled
+       <b>Qty formulas:</b> <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> · <code>shutter_perim</code> · <code>net_area</code> (net panels area Sft) · <code>net_perim</code> · <code>net_height</code> · <code>net_width</code> · <code>net_count</code> (no. of net panels) · add multiplier: <code>net_area*1.05</code><br>
+       <b>Net type</b> — set to <i>Fiber</i> or <i>S.S MESH</i> (or any type you add) so this item only appears when that netting is selected. <i>All</i> = any netting. Blank = always (netting or not). <b>Net only</b> = item hidden unless netting is selected (use with net_area/net_perim formulas).
      </div>
      </div></div>
    <div class="f2">
@@ -5327,12 +5341,15 @@ function renderCasHWTable(){
   if(!DB.rates.casementHardware) DB.rates.casementHardware={};
   if(!DB.rates.casementHardware[sys]) DB.rates.casementHardware[sys]=[];
   const items=DB.rates.casementHardware[sys];
-  document.getElementById('casHWTable').innerHTML=`<table><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
+  const casNetTypes=()=>{const t=new Set(['Fiber','S.S MESH']);Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a.category==='Net')t.add(k);}); return['','All',...t];};
+  document.getElementById('casHWTable').innerHTML=`<table style="min-width:720px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Check to show this item only when netting is selected">Net only</th><th title="Show only for this netting type. Blank = all windows. All = any netting.">Net type</th><th></th></tr></thead><tbody>
     ${items.map((it,i)=>`<tr>
-      <td><input style="max-width:200px" value="${esc(it.name||'')}" onchange="casHWSet('${sys}',${i},'name',this.value)"></td>
-      <td><input style="max-width:110px" value="${esc(String(it.qty??1))}" onchange="casHWSet('${sys}',${i},'qty',this.value)"></td>
-      <td><select onchange="casHWSet('${sys}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
+      <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="casHWSet('${sys}',${i},'name',this.value)"></td>
+      <td><input style="max-width:130px" value="${esc(String(it.qty??1))}" placeholder="1 or net_area" onchange="casHWSet('${sys}',${i},'qty',this.value)"></td>
+      <td><select style="max-width:70px" onchange="casHWSet('${sys}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
       <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${it.rate??0}" onchange="casHWSet('${sys}',${i},'rate',this.value)"></td>
+      <td style="text-align:center"><input type="checkbox" ${it.onlyNet?'checked':''} onchange="casHWSet('${sys}',${i},'onlyNet',this.checked)"></td>
+      <td><select style="max-width:100px" onchange="casHWSet('${sys}',${i},'netType',this.value)">${casNetTypes().map(t=>`<option value="${t}" ${(it.netType||'')===(t)?'selected':''}>${t||'—'}</option>`).join('')}</select></td>
       <td><button class="ghost sm danger" onclick="casHWDel('${sys}',${i})">✕</button></td></tr>`).join('')}
   </tbody></table>`;
 }
@@ -5355,16 +5372,18 @@ function renderSlideHWTable(){
   if(!DB.rates.slidingHardware) DB.rates.slidingHardware={};
   if(!DB.rates.slidingHardware[sys]) DB.rates.slidingHardware[sys]=[];
   const items=DB.rates.slidingHardware[sys];
-  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q;
-  const widthOpts=['','75mm','95mm','100mm'].map(w=>`<option value="${w}">${w||'All widths'}</option>`).join('');
-  document.getElementById('slideHWTable').innerHTML=items.length?`<table><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Leave blank to apply to all profile widths. Set e.g. 100mm to apply only when that width is used.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th>Net only</th><th></th></tr></thead><tbody>
+  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q==='net_area'?'net area (Sft)':q==='net_perim'?'net perim (rft)':q==='net_height'?'net height (rft)':q==='net_width'?'net width (rft)':q==='net_count'?'net count':q;
+  // net types derived from DB.rates.accessories netting category + SEED nets
+  const netTypes=()=>{const t=new Set(['Fiber','S.S MESH']);Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a.category==='Net')t.add(k);}); return['','All',...t];};
+  document.getElementById('slideHWTable').innerHTML=items.length?`<table style="min-width:820px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Apply only when this profile width is used. Blank = all widths.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th title="Check to show this item only when netting is selected">Net<br>only</th><th title="Show this item only for the selected netting type. Blank or — = all windows (netting or not). 'All' = any netting type.">Net<br>type</th><th></th></tr></thead><tbody>
   ${items.map((it,i)=>`<tr>
     <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="shwSet('${sys}',${i},'name',this.value)"></td>
-    <td><input style="max-width:130px" value="${esc(String(it.qty??2))}" placeholder="2 or outer_perim*6" onchange="shwSet('${sys}',${i},'qty',this.value)"></td>
+    <td><input style="max-width:130px" value="${esc(String(it.qty??2))}" placeholder="2 or net_area" onchange="shwSet('${sys}',${i},'qty',this.value)"></td>
     <td><select style="max-width:70px" onchange="shwSet('${sys}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
     <td class="right"><input type="number" style="max-width:80px;text-align:right" value="${it.rate||0}" onchange="shwSet('${sys}',${i},'rate',+this.value)"></td>
-    <td><select style="max-width:90px" onchange="shwSet('${sys}',${i},'widthFilter',this.value)">${['','75mm','95mm','100mm'].map(w=>`<option value="${w}" ${(it.widthFilter||'')===(w)?'selected':''}>${w||'All'}</option>`).join('')}</select></td>
+    <td><select style="max-width:90px" onchange="shwSet('${sys}',${i},'widthFilter',this.value)">${['','75mm','95mm','100mm','127mm'].map(w=>`<option value="${w}" ${(it.widthFilter||'')===(w)?'selected':''}>${w||'All'}</option>`).join('')}</select></td>
     <td style="text-align:center"><input type="checkbox" ${it.onlyNet?'checked':''} onchange="shwSet('${sys}',${i},'onlyNet',this.checked)"></td>
+    <td><select style="max-width:100px" onchange="shwSet('${sys}',${i},'netType',this.value)">${netTypes().map(t=>`<option value="${t}" ${(it.netType||'')===(t)?'selected':''}>${t||'—'}</option>`).join('')}</select></td>
     <td><button class="ghost sm danger" onclick="shwDel('${sys}',${i})">✕</button></td>
   </tr>`).join('')}</tbody></table>`:'<div class="muted" style="padding:12px">No items — click + Add Item</div>';
 }
