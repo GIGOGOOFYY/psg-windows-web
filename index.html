@@ -4425,11 +4425,14 @@ function calcWindow(w){
   // glass panes + spacer (priced from glass rate table, by type + thickness)
   const dblG=w.glazing==='Double', hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
   if(hasGlass){ const gA=glassOf(w);
-    if(dblG){ const perPane=gA.areaSft/2;
+    // use areaSftPer = per single window; breakdown display multiplies by r.qty
+    const unitsPerWin=(w.wtype==='sliding')?(num(w.nShutters)||2):1;
+    if(dblG){ const perPane=gA.areaSftPer/2;
       addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassOuterThk||'')+' (outer)',perPane,glassRate(w.glassOuter,w.glassOuterThk),'Sft');
       addHw('Glass — '+(w.glassInner||'Clear')+' '+(w.glassInnerThk||'')+' (inner)',perPane,glassRate(w.glassInner,w.glassInnerThk),'Sft');
-      if(gA.spacerRft) addHw('Spacer — '+(w.spacer||''),gA.spacerRft,spacerRate(w.spacer),'rft');
-    } else addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassThk||''),gA.areaSft,glassRate(w.glassOuter,w.glassThk),'Sft');
+      const spacerPerWin=dblG?+(2*(gA.paneW+gA.paneH)*unitsPerWin).toFixed(2):0;
+      if(spacerPerWin) addHw('Spacer — '+(w.spacer||''),spacerPerWin,spacerRate(w.spacer),'rft');
+    } else addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassThk||''),gA.areaSftPer,glassRate(w.glassOuter,w.glassThk),'Sft');
   }
   const hardware=hw.reduce((s,x)=>s+x.amount,0);
 
@@ -4530,12 +4533,19 @@ function glassLabel(w){
     return `${u?u+'mm ':''}DGU · ${w.glassOuter||'Clear'} ${w.glassOuterThk||''} + ${w.glassInner||'Clear'} ${w.glassInnerThk||''}`.replace(/\s+/g,' ').trim(); }
   const t=w.glassThk||''; return t?`${t} Tempered ${w.glassOuter||'Clear'}`:'—'; }
 function glassOf(w){ const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,qty=num(w.qty)||1;
-  const units=((w.wtype==='sliding')?(num(w.nShutters)||2):1)*qty;   // glazed openings
+  // units = glazed openings PER SINGLE WINDOW (no qty multiplication here)
+  // qty multiplication is applied by callers (BOM totals, glass schedule) separately
+  const unitsPerWin=((w.wtype==='sliding')?(num(w.nShutters)||2):1);
+  const units=unitsPerWin*qty;   // total glazed openings across all windows (for BOM/schedule)
   const dbl=w.glazing==='Double', panesPer=dbl?2:1;
+  // areaSft = per single window (used by calcWindow for pricing — display multiplies by qty)
+  const areaSftPer=+(SW*SH*panesPer*unitsPerWin).toFixed(2);
   return {label:glassLabel(w),glazing:w.glazing||'Single',unitThk:dbl?unitThk(w):null,
     outer:w.glassOuter||'Clear',outerThk:dbl?(w.glassOuterThk||''):(w.glassThk||''),
     inner:dbl?(w.glassInner||'Clear'):null,innerThk:dbl?(w.glassInnerThk||''):null,spacer:w.spacer||'',
-    paneW:SW,paneH:SH,units,panes:units*panesPer,areaSft:+(SW*SH*panesPer*units).toFixed(2),
+    paneW:SW,paneH:SH,units,panes:units*panesPer,
+    areaSft:areaSftPer*qty,   // total across all windows (for BOM/glass schedule)
+    areaSftPer,               // per single window (for calcWindow pricing)
     spacerRft:dbl?+(2*(SW+SH)*units).toFixed(2):0}; }
 /* hardware BOM lines for production (materials, with units) */
 function bomOf(w){ return calcWindow(w).hw.filter(h=>h.label!=='Labor' && !/^Glass — |^Spacer — /.test(h.label)).map(h=>({item:h.label,qty:+(Math.round(h.qty*100)/100),unit:h.unit})); }
