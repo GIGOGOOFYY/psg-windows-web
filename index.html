@@ -5155,7 +5155,7 @@ function renderRates(){
      </tbody></table>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">
        <b>Qty formulas:</b> <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> · <code>shutter_perim</code> · <code>net_area</code> (net panels area Sft) · <code>net_perim</code> · <code>net_height</code> · <code>net_width</code> · <code>net_count</code> (no. of net panels) · add multiplier: <code>net_area*1.05</code><br>
-       <b>Net type</b> — set to <i>Fiber</i> or <i>S.S MESH</i> (or any type you add) so this item only appears when that netting is selected. <i>All</i> = any netting. Blank = always (netting or not). <b>Net only</b> = item hidden unless netting is selected (use with net_area/net_perim formulas).
+       <b>Net type</b> — set to <i>FIBER</i> or <i>S.S MESH</i> (or any type you add) so this item only appears when that netting is selected. <i>All</i> = any netting. Blank = always (netting or not). <b>Net only</b> = item hidden unless netting is selected (use with net_area/net_perim formulas).
      </div>
      </div></div>
    <div class="f2">
@@ -5341,7 +5341,7 @@ function renderCasHWTable(){
   if(!DB.rates.casementHardware) DB.rates.casementHardware={};
   if(!DB.rates.casementHardware[sys]) DB.rates.casementHardware[sys]=[];
   const items=DB.rates.casementHardware[sys];
-  const casNetTypes=()=>{const t=new Set(['Fiber','S.S MESH']);Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a.category==='Net')t.add(k);}); return['','All',...t];};
+  const casNetTypes=()=>{const t=new Set();Object.entries(SEED.accessories||{}).forEach(([k,v])=>{if(v.category==='Net')t.add(k);});Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a&&a.category==='Net')t.add(k);}); return['','All',...t];};
   document.getElementById('casHWTable').innerHTML=`<table style="min-width:720px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Check to show this item only when netting is selected">Net only</th><th title="Show only for this netting type. Blank = all windows. All = any netting.">Net type</th><th></th></tr></thead><tbody>
     ${items.map((it,i)=>`<tr>
       <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="casHWSet('${sys}',${i},'name',this.value)"></td>
@@ -5374,7 +5374,7 @@ function renderSlideHWTable(){
   const items=DB.rates.slidingHardware[sys];
   const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q==='net_area'?'net area (Sft)':q==='net_perim'?'net perim (rft)':q==='net_height'?'net height (rft)':q==='net_width'?'net width (rft)':q==='net_count'?'net count':q;
   // net types derived from DB.rates.accessories netting category + SEED nets
-  const netTypes=()=>{const t=new Set(['Fiber','S.S MESH']);Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a.category==='Net')t.add(k);}); return['','All',...t];};
+  const netTypes=()=>{const t=new Set();Object.entries(SEED.accessories||{}).forEach(([k,v])=>{if(v.category==='Net')t.add(k);});Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a&&a.category==='Net')t.add(k);}); return['','All',...t];};
   document.getElementById('slideHWTable').innerHTML=items.length?`<table style="min-width:820px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Apply only when this profile width is used. Blank = all widths.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th title="Check to show this item only when netting is selected">Net<br>only</th><th title="Show this item only for the selected netting type. Blank or — = all windows (netting or not). 'All' = any netting type.">Net<br>type</th><th></th></tr></thead><tbody>
   ${items.map((it,i)=>`<tr>
     <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="shwSet('${sys}',${i},'name',this.value)"></td>
