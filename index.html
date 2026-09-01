@@ -4452,13 +4452,13 @@ function calcWindow(w){
         if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
       });
     }
-    // ---- fixed hardware (per-series; applied to fixed and all combo types) ----
-    if(wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed'){
-      ((DB.rates.fixedHardware||{})[series]||[]).forEach(item=>{
-        const q=evalQty(item.qty);
-        if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
-      });
-    }
+  }
+  // ---- fixed hardware (per-series; applied to fixed and all combo types) ----
+  if(wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed'){
+    ((DB.rates.fixedHardware||{})[series]||[]).forEach(item=>{
+      const q=evalQty(item.qty);
+      if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
+    });
   }
   // Labor, Silicon, Window Hardware: no longer hardcoded — add them via Rates → Accessories with applyTo set
   // ---- auto-apply accessories (user-configured via Rates panel) ----
