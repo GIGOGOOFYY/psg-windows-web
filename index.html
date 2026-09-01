@@ -2250,12 +2250,9 @@ const SEED = /*__SEED__*/{
   "interlock": {
     "categoryType": {
       "Casement": "casement",
-      "Awning": "awning",
+      "Awning": "casement",
       "Fixed": "fixed",
-      "Sliding": "sliding",
-      "Casement+Fixed": "casement+fixed",
-      "Awning+Fixed": "awning+fixed",
-      "Sliding+Fixed": "sliding+fixed"
+      "Sliding": "sliding"
     },
     "thermal": {
       "casement": {
@@ -2293,22 +2290,6 @@ const SEED = /*__SEED__*/{
           "BOX_SLIDING",
           "DG_SLIDING"
         ],
-        "YES": []
-      },
-      "awning": {
-        "NO": ["ECONOMY","MODERNA","INNOVA","EUROLINE"],
-        "YES": ["URBAN","URBAN_PLUS","URBAN_COMFORT","EUROTHERM"]
-      },
-      "casement+fixed": {
-        "NO": ["ECONOMY","MODERNA","INNOVA","EUROLINE"],
-        "YES": ["URBAN","URBAN_PLUS","URBAN_COMFORT","EUROTHERM"]
-      },
-      "awning+fixed": {
-        "NO": ["ECONOMY","MODERNA","INNOVA","EUROLINE"],
-        "YES": ["URBAN","URBAN_PLUS","URBAN_COMFORT","EUROTHERM"]
-      },
-      "sliding+fixed": {
-        "NO": ["ECONOMY_SLIDING","DELUXE_SLIDING","BOX_SLIDING","DG_SLIDING"],
         "YES": []
       }
     },
@@ -4095,27 +4076,6 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(!s.rates.glass) s.rates.glass=structuredClone(SEED.glass||[]);
   if(!s.rates.spacers) s.rates.spacers=structuredClone(SEED.spacers||[]);
   if(!s.rates.handleAccessories) s.rates.handleAccessories=structuredClone(HANDLE_ACC_DEFAULT);
-  /* ---- one-time migration: old per-series HW → new flat lists ---- */
-  function migrateHW(srcKey, destKey, keepNetFields){
-    if(!s.rates[destKey] && s.rates[srcKey]){
-      const seen=new Set(), merged=[];
-      Object.values(s.rates[srcKey]).forEach(arr=>{
-        (arr||[]).forEach(it=>{
-          if(!seen.has(it.name)){ seen.add(it.name);
-            const out={name:it.name||'',qty:it.qty??1,unit:it.unit||'pc',rate:it.rate??0};
-            if(keepNetFields){ out.onlyNet=!!it.onlyNet; out.netType=it.netType||''; }
-            merged.push(out);
-          }
-        });
-      });
-      if(merged.length) s.rates[destKey]=merged;
-    }
-    if(!s.rates[destKey]) s.rates[destKey]=[];
-  }
-  migrateHW('casementHardware','casHWCommon',true);
-  migrateHW('slidingHardware','slideHWCommon',true);
-  if(!s.rates.awningHWCommon) s.rates.awningHWCommon=[];
-  if(!s.rates.fixHWCommon) s.rates.fixHWCommon=[];
   /* re-attach catalogue images from separate localStorage keys */
   if(s.rates&&s.rates.catalogue){
     s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
@@ -4157,10 +4117,9 @@ function resetRates(){ DB.rates=structuredClone(SEED); save(); toast('Rates rese
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
 function seriesFor(wtype,thermal){
-  // combo types use their primary type's series list
-  const base=wtype==='casement+fixed'?'casement':wtype==='awning+fixed'?'awning':wtype==='sliding+fixed'?'sliding':wtype;
-  const t=IL.thermal[base]||IL.thermal.casement;
+  const t=IL.thermal[wtype]||IL.thermal.casement;
   let list=(t[thermal]||[]).slice();
+  // only keep series we actually have a profile system for OR keep name (some have no rates)
   return list;
 }
 // Derive brand+lockType for each SEED handle from handleModels
@@ -4459,34 +4418,12 @@ function calcWindow(w){
       const q=evalQty(item.qty);
       if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
     });
-
-    // ---- casement hardware ----
-    if(wtype==='casement'||wtype==='casement+fixed'){
-      (DB.rates.casHWCommon||[]).forEach(item=>{
+    // ---- casement/awning-specific hardware from Rates ----
+    if(wtype==='casement'||wtype==='awning'){
+      const casHW=((DB.rates.casementHardware||{})[series]||[]);
+      casHW.forEach(item=>{
         if(item.onlyNet && !w.netting) return;
-        const q=evalQty(item.qty);
-        if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
-      });
-    }
-    // ---- awning hardware ----
-    if(wtype==='awning'||wtype==='awning+fixed'){
-      (DB.rates.awningHWCommon||[]).forEach(item=>{
-        if(item.onlyNet && !w.netting) return;
-        const q=evalQty(item.qty);
-        if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
-      });
-    }
-    // ---- fixed hardware (applied to fixed, and to all combo types) ----
-    if(wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed'){
-      (DB.rates.fixHWCommon||[]).forEach(item=>{
-        const q=evalQty(item.qty);
-        if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
-      });
-    }
-    // ---- sliding+fixed hardware ----
-    if(wtype==='sliding+fixed'){
-      (DB.rates.slideHWCommon||[]).forEach(item=>{
-        if(item.onlyNet && !w.netting) return;
+        const nt=item.netType||''; if(nt && nt!=='All' && nt!==w.netting) return;
         const q=evalQty(item.qty);
         if(q>0) addHw(item.name||'',q,num(item.rate)||0,item.unit||'pc');
       });
@@ -4810,9 +4747,7 @@ function winFormHTML(w,r){
   const seriesList=seriesFor(wtype,w.thermal||'NO');
   const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series);
   const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
-  const isFixed=wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed',
-        isSlide=wtype==='sliding'||wtype==='sliding+fixed',
-        isCase=wtype==='casement'||wtype==='casement+fixed';
+  const isFixed=wtype==='fixed', isSlide=wtype==='sliding', isCase=wtype==='casement';
   const isDouble=(w.glazing==='Double');
   const thkList=IL.glassThk[w.glazing||'Single']||[], typeList=glassChoices(w.glazing||'Single'), spacerList=spacerChoices();
   const noRate = w.series && !hasRates(w.series);
@@ -5078,7 +5013,7 @@ function openAddCatalogueItem(editCode){
      <div class="f2">
        <div><label style="font-size:12px;font-weight:600">Window Type</label>
          <select id="ncWtype" style="width:100%;margin-top:4px">
-           ${['casement','sliding','fixed','awning','lift-slide','door','casement+fixed','awning+fixed','sliding+fixed'].map(t=>`<option value="${t}" ${existing&&existing.wtype===t?'selected':''}>${t.split('+').map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join(' + ')}</option>`).join('')}
+           ${['casement','sliding','fixed','awning','lift-slide','door'].map(t=>`<option value="${t}" ${existing&&existing.wtype===t?'selected':''}>${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}
          </select></div>
        <div><label style="font-size:12px;font-weight:600">Handle Qty</label>
          <input id="ncHq" type="number" min="0" max="10" value="${existing?existing.handleQty:1}" style="width:100%;margin-top:4px"></div>
@@ -5225,7 +5160,7 @@ function renderRates(){
          ${['pc','rft','Sft','kg'].map(u=>`<option ${(v.unit||'pc')===u?'selected':''}>${u}</option>`).join('')}</select></td>
        <td class="right"><input style="max-width:100px;text-align:right" type="number" value="${v.rate}" onchange="DB.rates.accessories['${jsq(k)}'].rate=num(this.value);save();toast('Saved')"></td>
        <td><select style="max-width:90px" onchange="DB.rates.accessories['${jsq(k)}'].applyTo=this.value;save()">
-         ${['—','All','Casement','Awning','Fixed','Sliding','Casement+Fixed','Awning+Fixed','Sliding+Fixed'].map(t=>`<option ${(v.applyTo||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
+         ${['—','All','Casement','Sliding','Fixed','Awning'].map(t=>`<option ${(v.applyTo||'—')===t?'selected':''}>${t}</option>`).join('')}</select></td>
        <td><input style="width:130px" value="${esc(v.qtyType||'—')}" placeholder="e.g. outer_area" title="Qty formula: 1, outer_area, shutter_area, outer_perim, shutter_perim, net_perim, or with multiplier e.g. outer_perim*6. Use — to disable." onchange="DB.rates.accessories['${jsq(k)}'].qtyType=this.value.trim();save();toast('Saved')"></td>
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
      </tbody></table>
@@ -5285,40 +5220,29 @@ function renderRates(){
      <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
      <div id="sysTable" style="overflow:auto"></div></div></div>
    <div class="card" style="margin-top:16px">
-     <div class="hd"><b>Casement Hardware</b>
-       <button class="sm" onclick="addCommonHWItem('cas')">+ Add Item</button>
+     <div class="hd"><b>Casement &amp; Awning Hardware</b>
+       <select id="casHWSel" onchange="renderCasHWTable()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <button class="sm" onclick="addCasHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Applies to all Casement windows. Qty: <code>outer_perim</code> rft, <code>shutter_perim</code> rft, <code>outer_area</code> Sft, <code>shutter_area</code> Sft.</div>
-     <div id="casHWCommonTable" style="overflow:auto"></div>
-   </div>
-   <div class="card" style="margin-top:16px">
-     <div class="hd"><b>Awning Hardware</b>
-       <button class="sm" onclick="addCommonHWItem('awning')">+ Add Item</button>
-     </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Applies to all Awning windows. Qty: <code>outer_perim</code> rft, <code>shutter_perim</code> rft, <code>outer_area</code> Sft, <code>shutter_area</code> Sft.</div>
-     <div id="awningHWCommonTable" style="overflow:auto"></div>
-   </div>
-   <div class="card" style="margin-top:16px">
-     <div class="hd"><b>Fixed Window Hardware</b>
-       <button class="sm" onclick="addCommonHWItem('fix')">+ Add Item</button>
-     </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Applies to all Fixed windows. Qty: <code>outer_perim</code> rft, <code>outer_area</code> Sft.</div>
-     <div id="fixHWCommonTable" style="overflow:auto"></div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Extra hardware items added per casement/awning window, beyond handles and hinges. Qty formulas: <code>outer_perim</code> = 2×(OH+OW) rft, <code>shutter_perim</code> = 2×(SH+SW) rft, <code>outer_area</code> = OH×OW Sft, <code>shutter_area</code> = SH×SW Sft. Add a multiplier: e.g. <code>outer_perim*6</code>.</div>
+     <div id="casHWTable" style="overflow:auto"></div>
    </div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Sliding Window Hardware</b>
-       <button class="sm" onclick="addCommonHWItem('slide')">+ Add Item</button>
+       <select id="slideHWSel" onchange="renderSlideHWTable()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Applies to all Sliding windows. Qty: <code>outer_perim</code> rft, <code>shutter_perim</code> rft, <code>outer_area</code> Sft, <code>shutter_area</code> Sft.</div>
-     <div id="slideHWCommonTable" style="overflow:auto"></div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Items marked <b>Net only</b> appear only when netting is selected. Qty formulas:<br>
+       <code>outer_perim</code> = 2×(OH+OW) rft &nbsp;·&nbsp; <code>shutter_perim</code> = 2×(SH+SW)×nShutters rft &nbsp;·&nbsp; <code>net_perim</code> = same as shutter_perim<br>
+       <code>outer_area</code> = OH×OW in Sft &nbsp;·&nbsp; <code>shutter_area</code> = SH×SW×nShutters in Sft<br>
+       Add a multiplier: e.g. <code>outer_perim*6</code>, <code>outer_area*1.1</code></div>
+     <div id="slideHWTable" style="overflow:auto"></div>
    </div>
 `;
   renderSysTable();
   renderHandleAccTable();
-  renderCommonHWTable('cas');
-  renderCommonHWTable('awning');
-  renderCommonHWTable('fix');
-  renderCommonHWTable('slide');
+  renderCasHWTable();
+  renderSlideHWTable();
 }
 // Section groups: each entry is [groupLabel, [sectionNames]]
 const SEC_GROUPS=[
@@ -5452,67 +5376,6 @@ function addCasHWItem(){
   if(!DB.rates.casementHardware[sys]) DB.rates.casementHardware[sys]=[];
   DB.rates.casementHardware[sys].push({name:'New Item',qty:1,unit:'pc',rate:0});
   save(); renderCasHWTable();
-}
-function renderFixedHWTable(){
-  const sel=document.getElementById('fixHWSel'); if(!sel) return;
-  const sys=sel.value;
-  if(!DB.rates.fixedHardware) DB.rates.fixedHardware={};
-  if(!DB.rates.fixedHardware[sys]) DB.rates.fixedHardware[sys]=[];
-  const items=DB.rates.fixedHardware[sys];
-  document.getElementById('fixHWTable').innerHTML=items.length?`<table style="min-width:620px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
-  ${items.map((it,i)=>`<tr>
-    <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="fixHWSet('${sys}',${i},'name',this.value)"></td>
-    <td><input style="max-width:130px" value="${esc(String(it.qty??1))}" placeholder="1 or outer_area" onchange="fixHWSet('${sys}',${i},'qty',this.value)"></td>
-    <td><select style="max-width:70px" onchange="fixHWSet('${sys}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
-    <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${it.rate??0}" onchange="fixHWSet('${sys}',${i},'rate',this.value)"></td>
-    <td><button class="ghost sm danger" onclick="fixHWDel('${sys}',${i})">✕</button></td></tr>`).join('')}
-  </tbody></table>`:'<div class="bd muted" style="padding:10px 16px">No items yet — click + Add Item.</div>';
-}
-function fixHWSet(sys,i,key,val){
-  const it=DB.rates.fixedHardware[sys][i];
-  it[key]=key==='rate'?num(val):(key==='qty'?(/^\d/.test(val)?num(val):val):val);
-  save(); toast('Saved');
-}
-function fixHWDel(sys,i){ DB.rates.fixedHardware[sys].splice(i,1); save(); renderFixedHWTable(); }
-function addFixedHWItem(){
-  const sys=val('fixHWSel')||'ECONOMY';
-  if(!DB.rates.fixedHardware) DB.rates.fixedHardware={};
-  if(!DB.rates.fixedHardware[sys]) DB.rates.fixedHardware[sys]=[];
-  DB.rates.fixedHardware[sys].push({name:'New Item',qty:1,unit:'pc',rate:0});
-  save(); renderFixedHWTable();
-}
-// ---- Common HW items (shared across all series) ----
-const HW_COMMON_KEY={cas:'casHWCommon',awning:'awningHWCommon',fix:'fixHWCommon',slide:'slideHWCommon'};
-function renderCommonHWTable(type){
-  const key=HW_COMMON_KEY[type]; if(!key) return;
-  const elId=type+'HWCommonTable';
-  const el=document.getElementById(elId); if(!el) return;
-  if(!DB.rates[key]) DB.rates[key]=[];
-  const items=DB.rates[key];
-  el.innerHTML=items.length?`<table style="min-width:520px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
-  ${items.map((it,i)=>`<tr>
-    <td><input style="min-width:160px" value="${esc(it.name||'')}" onchange="commonHWSet('${type}',${i},'name',this.value)"></td>
-    <td><input style="max-width:130px" value="${esc(String(it.qty??1))}" placeholder="1 or outer_area" onchange="commonHWSet('${type}',${i},'qty',this.value)"></td>
-    <td><select style="max-width:70px" onchange="commonHWSet('${type}',${i},'unit',this.value)"><option ${it.unit==='pc'?'selected':''}>pc</option><option ${it.unit==='rft'?'selected':''}>rft</option><option ${it.unit==='Sft'?'selected':''}>Sft</option></select></td>
-    <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${it.rate??0}" onchange="commonHWSet('${type}',${i},'rate',this.value)"></td>
-    <td><button class="ghost sm danger" onclick="commonHWDel('${type}',${i})">✕</button></td></tr>`).join('')}
-  </tbody></table>`:'<div style="padding:6px 16px;color:var(--muted);font-size:12px">No common items yet.</div>';
-}
-function commonHWSet(type,i,key,val){
-  const arr=DB.rates[HW_COMMON_KEY[type]]; if(!arr) return;
-  const it=arr[i]; if(!it) return;
-  it[key]=key==='rate'?num(val):(key==='qty'?(/^\d/.test(val)?num(val):val):val);
-  save(); toast('Saved');
-}
-function commonHWDel(type,i){
-  const arr=DB.rates[HW_COMMON_KEY[type]]; if(!arr) return;
-  arr.splice(i,1); save(); renderCommonHWTable(type);
-}
-function addCommonHWItem(type){
-  const key=HW_COMMON_KEY[type]; if(!key) return;
-  if(!DB.rates[key]) DB.rates[key]=[];
-  DB.rates[key].push({name:'New Item',qty:1,unit:'pc',rate:0});
-  save(); renderCommonHWTable(type);
 }
 function renderSlideHWTable(){
   const sel=document.getElementById('slideHWSel'); if(!sel) return;
