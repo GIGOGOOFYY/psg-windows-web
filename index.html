@@ -2488,7 +2488,7 @@ const SEED = /*__SEED__*/{
     "MODERNA": true,
     "URBAN": true,
     "INNOVA": true,
-    "ECONOMY": false,
+    "ECONOMY": true,
     "URBAN_COMFORT": true,
     "DG_SLIDING": true,
     "ECONOMY_SLIDING": true,
@@ -4197,7 +4197,11 @@ function lockTypesFor(wtype){
   return [...new Set([...seed,...db])];
 }
 function widthsFor(series){ return SEED.widths[rateSeries(series)]||[]; }
-function hasRates(series){ return !!SEED.systemsHaveRates[rateSeries(series)]; }
+function hasRates(series){
+  // Dynamic: does this series have at least one part with a non-zero rate?
+  const parts=sysParts(series);
+  return parts.some(p=>p.rates && Object.values(p.rates).some(v=>num(v)>0));
+}
 function glassChoices(glazing){ const cats=(glazing==='Single')?SEED.singleCats:SEED.glassCats;
   return [...new Set((DB.rates.glass||[]).filter(g=>cats.includes(g.cat)).map(g=>g.name))]; }
 function glassRate(name,thk){ const gs=(DB.rates.glass||[]).filter(x=>x.name===name);
@@ -4756,7 +4760,7 @@ function winFormHTML(w,r){
      <div class="field"><label>Thermal insulation</label><select data-k="thermal" ${bind} ${isSlide?'disabled':''}>${opt(['NO','YES'],w.thermal||'NO')}</select></div>
      <div class="field"><label>Series</label><select data-k="series" ${bind}>${optBlank(seriesList,w.series)}</select></div>
    </div>
-   ${noRate?`<div class="chip a" style="margin-bottom:10px">⚠ ${esc(w.series)} has no profile rates in the workbook — aluminium will price as 0 until you add rates in the Rates screen.</div>`:''}
+   ${noRate?`<div class="chip a" style="margin-bottom:10px">⚠ ${esc(w.series)} has no profile rates — aluminium will price as Rs 0. Add rates for this series in the Rates screen.</div>`:''}
    <div class="f4">
      <div class="field"><label>Profile width</label><select data-k="width" ${bind}>${optBlank(widths,w.width)}</select></div>
      <div class="field"><label>Finish</label><select data-k="finish" ${bind}>${opt(SEED.finishes,w.finish||'Natural')}</select></div>
@@ -4831,7 +4835,7 @@ function breakdownHTML(r,wid){
   return `<div class="row" style="margin-top:6px">
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminium*r.qty)}</span></div>
       <div class="bd" style="padding:12px 16px">${r.sec.length?r.sec.map(s=>`<div class="bd-line"><span>${s.label} ${profileCell(s)} <span class="muted">${s.width||''} · ${Math.round(s.length*r.qty*100)/100} rft × ${money(s.rate)}</span></span><b>${money(s.amount*r.qty)}</b></div>`).join(''):'<div class="muted">No profile data for this series/section.</div>'}
-      <div class="bd-line" style="margin-top:8px;border-top:1px dashed var(--bd);padding-top:8px"><span style="font-weight:500">Al. Discount %</span><span><input type="number" min="0" max="100" step="0.5" data-k="alDiscount" style="width:70px;text-align:right;border:1px solid var(--bd);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--tx)" value="${r.alDiscPct||0}" oninput="upd('${wid}',this)" onchange="upd('${wid}',this)"> %</span></div>
+      <div class="bd-line" style="margin-top:8px;border-top:1px dashed var(--bd);padding-top:8px"><span style="font-weight:500">Al. Discount %</span><span><input type="number" min="0" max="100" step="0.5" data-k="alDiscount" style="width:70px;text-align:right;border:1px solid var(--bd);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--tx)" value="${r.alDiscPct||0}" onchange="upd('${wid}',this)"> %</span></div>
       </div></div>
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Hardware & labour</b><span class="chip">${money(r.hardware*r.qty)}</span></div>
       <div class="bd" style="padding:12px 16px">${r.hw.map(h=>`<div class="bd-line"><span>${h.label} <span class="muted">${Math.round(h.qty*r.qty*100)/100} ${h.unit} × ${money(h.rate)}</span></span><b>${money(h.amount*r.qty)}</b></div>`).join('')}</div></div></div>
