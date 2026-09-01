@@ -4449,9 +4449,12 @@ function calcWindow(w){
   }
   const hardware=hw.reduce((s,x)=>s+x.amount,0);
 
-  const subtotal=aluminium+hardware, profitPct=num(w.profit);
+  const alDiscPct=num(w.alDiscount)||0;
+  const alDiscAmt=aluminium*(alDiscPct/100);
+  const aluminiumAfterDisc=aluminium-alDiscAmt;
+  const subtotal=aluminiumAfterDisc+hardware, profitPct=num(w.profit);
   const withProfit=subtotal*(1+profitPct/100), qty=num(w.qty)||1;
-  return {wtype,OH,OW,SH,SW,area,sec,hw,aluminium,hardware,subtotal,profitPct,withProfit,qty,
+  return {wtype,OH,OW,SH,SW,area,sec,hw,aluminium,alDiscPct,alDiscAmt,aluminiumAfterDisc,hardware,subtotal,profitPct,withProfit,qty,
     lineTotal:withProfit*qty, perSqft:area?withProfit/area:0};
 }
 function quoteTotal(q){ return (q.windows||[]).reduce((s,w)=>s+calcWindow(w).lineTotal,0); }
@@ -4807,6 +4810,7 @@ function winFormHTML(w,r){
      <div class="muted" style="align-self:center"><span class="chip">🔲 ${unitThk(w)?unitThk(w)+'mm DGU':'Double-glazed unit'}</span></div>
      <div class="field"><label>Inner pane</label><select data-k="glassInner" ${bind}>${opt(typeList,w.glassInner||'Clear')}</select></div>
      <div class="field"><label>Inner thickness</label><select data-k="glassInnerThk" ${bind}>${optBlank(SEED.paneThk,w.glassInnerThk)}</select></div>
+     <div class="field"><label>Al. Discount %</label><input data-k="alDiscount" type="number" step="0.5" min="0" value="${w.alDiscount??0}" ${bind}></div>
      <div class="field"><label>Profit %</label><input data-k="profit" type="number" step="1" value="${w.profit??20}" ${bind}></div></div>`:''}
    <div class="bd-wrap">${breakdownHTML(r,w.id)}</div>`;
 }
@@ -4826,10 +4830,13 @@ function breakdownHTML(r,wid){
   };
   return `<div class="row" style="margin-top:6px">
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminium*r.qty)}</span></div>
-      <div class="bd" style="padding:12px 16px">${r.sec.length?r.sec.map(s=>`<div class="bd-line"><span>${s.label} ${profileCell(s)} <span class="muted">${s.width||''} · ${Math.round(s.length*r.qty*100)/100} rft × ${money(s.rate)}</span></span><b>${money(s.amount*r.qty)}</b></div>`).join(''):'<div class="muted">No profile data for this series/section.</div>'}</div></div>
+      <div class="bd" style="padding:12px 16px">${r.sec.length?r.sec.map(s=>`<div class="bd-line"><span>${s.label} ${profileCell(s)} <span class="muted">${s.width||''} · ${Math.round(s.length*r.qty*100)/100} rft × ${money(s.rate)}</span></span><b>${money(s.amount*r.qty)}</b></div>`).join(''):'<div class="muted">No profile data for this series/section.</div>'}
+      <div class="bd-line" style="margin-top:8px;border-top:1px dashed var(--bd);padding-top:8px"><span style="font-weight:500">Al. Discount %</span><span><input type="number" min="0" max="100" step="0.5" style="width:70px;text-align:right;border:1px solid var(--bd);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--tx)" value="${r.alDiscPct||0}" onchange="(function(v){const q=curr(),w=q&&q.windows.find(x=>x.id==='${wid}');if(w){w.alDiscount=v;save();renderWin('${wid}');};})(+this.value)"> %</span></div>
+      </div></div>
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Hardware & labour</b><span class="chip">${money(r.hardware*r.qty)}</span></div>
       <div class="bd" style="padding:12px 16px">${r.hw.map(h=>`<div class="bd-line"><span>${h.label} <span class="muted">${Math.round(h.qty*r.qty*100)/100} ${h.unit} × ${money(h.rate)}</span></span><b>${money(h.amount*r.qty)}</b></div>`).join('')}</div></div></div>
    <div class="card" style="margin-top:12px"><div class="bd" style="padding:12px 16px">
+     ${r.alDiscPct?`<div class="bd-line" style="color:#c0392b"><span>Al. Discount (${r.alDiscPct}%)</span><b>− ${money(r.alDiscAmt)}</b></div>`:''}
      <div class="bd-line"><span>Subtotal (aluminium + hardware)</span><b>${money(r.subtotal)}</b></div>
      <div class="bd-line"><span>Profit (${r.profitPct}%)</span><b>${money(r.withProfit-r.subtotal)}</b></div>
      <div class="bd-line"><span>Per unit · <span class="muted">${money(r.perSqft)}/sqft (${r.area.toFixed(2)} sqft)</span></span><b>${money(r.withProfit)}</b></div>
@@ -5583,7 +5590,9 @@ function doPrint(id,mode){
        <table style="margin-bottom:6px"><thead><tr><th>Hardware / labour</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
         <tbody>${r.hw.map(h=>`<tr><td>${h.label}</td><td style="text-align:right">${Math.round(h.qty*r.qty*100)/100} ${h.unit}</td><td style="text-align:right">${money(h.rate)}</td><td style="text-align:right">${money(h.amount*r.qty)}</td></tr>`).join('')}
          <tr><td colspan=3 style="text-align:right"><b>Hardware subtotal</b></td><td style="text-align:right"><b>${money(r.hardware*r.qty)}</b></td></tr></tbody></table>
-       <table style="margin-bottom:16px"><tbody><tr><td>Subtotal</td><td style="text-align:right">${money(r.subtotal*r.qty)}</td></tr>
+       <table style="margin-bottom:16px"><tbody>
+        ${r.alDiscPct?`<tr><td style="color:#c0392b">Al. Discount (${r.alDiscPct}%)</td><td style="text-align:right;color:#c0392b">− ${money(r.alDiscAmt*r.qty)}</td></tr>`:''}
+        <tr><td>Subtotal</td><td style="text-align:right">${money(r.subtotal*r.qty)}</td></tr>
         <tr><td>Profit (${r.profitPct}%)</td><td style="text-align:right">${money((r.withProfit-r.subtotal)*r.qty)}</td></tr>
         <tr><td><b>Per unit (${money(r.perSqft)}/sqft · ${r.area.toFixed(2)} sqft)</b></td><td style="text-align:right"><b>${money(r.withProfit)}</b></td></tr>
         <tr><td><b>Line total × ${r.qty}</b></td><td style="text-align:right"><b>${money(r.lineTotal)}</b></td></tr></tbody></table></div>`;});
