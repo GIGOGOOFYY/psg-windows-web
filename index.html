@@ -4319,7 +4319,7 @@ function getGlaze(series,part,section,width){
   const sp=(SEED.systems[rateSeries(series)]||[]).find(p=>p.part===part&&p.section===section&&p.width===width);
   return sp?sp.glaze||null:null;
 }
-function partsFor(series,section,widthPref,glazing){
+function partsFor(series,section,widthPref,glazing,glassThkMm){
   let parts=sysParts(series).filter(p=>partSections(p).includes(section));
   if(!parts.length) return [];
   if(widthPref){ const m=parts.filter(p=>{const ws=partWidths(p);return ws.length===0||ws.includes(String(widthPref));}); if(m.length) parts=m; }
@@ -4327,14 +4327,27 @@ function partsFor(series,section,widthPref,glazing){
   if(hasTags && glazing){
     const tag=glazing==='Double'?'dg':'sg';
     const tagged=parts.filter(p=>getGlaze(series,p.part,section,p.width)===tag);
-    if(tagged.length) return tagged;
+    if(tagged.length) parts=tagged;
+    else if(hasTags) parts=parts.filter(p=>!getGlaze(series,p.part,section,p.width));
   }
-  if(hasTags) return parts.filter(p=>!getGlaze(series,p.part,section,p.width));
+  // Glass-thickness filter: only applies to Bidding sections; parts with no range always pass
+  if(section.startsWith('Bidding') && glassThkMm>0){
+    const ranged=parts.filter(p=>{ const mn=num(p.glassMin),mx=num(p.glassMax); if(!mn&&!mx) return false; return glassThkMm>=mn&&glassThkMm<=mx; });
+    if(ranged.length) return ranged; // matched by range — use these
+    // fall through: no parts have a matching range → return unranged parts as fallback
+    const unranged=parts.filter(p=>!num(p.glassMin)&&!num(p.glassMax));
+    if(unranged.length) return unranged;
+  }
   return parts;
 }
-function pickPart(series,section,widthPref,pickedName,glazing){
-  const parts=partsFor(series,section,widthPref,glazing);
+function pickPart(series,section,widthPref,pickedName,glazing,glassThkMm){
+  const parts=partsFor(series,section,widthPref,glazing,glassThkMm);
   if(!parts.length) return null;
+  // For Bidding: auto-select by glass thickness (ignore manual pick if it's not in filtered list)
+  if(section.startsWith('Bidding') && glassThkMm>0){
+    const ranged=parts.filter(p=>{ const mn=num(p.glassMin),mx=num(p.glassMax); return mn>0||mx>0; });
+    if(ranged.length) return ranged[0]; // auto-pick first thickness-matched part
+  }
   if(pickedName){ const m=parts.find(p=>p.part===pickedName); if(m) return m; }
   return parts[0];
 }
@@ -4365,11 +4378,14 @@ function calcWindow(w){
   const sec=[]; let dsSec={outer:0,divider:0,bidding:0,netting:0,shutter:0};
   const picks=w.picks||{};
   const glazing=w.glazing||'Single';
+  const dblG=glazing==='Double';
+  // Glass thickness in mm — used to auto-select the correct bidding profile
+  const glassThkMm=dblG?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
   const addSec=(label,section,length,widthPref)=>{
     if(!hasSection(series,section)||length<=0) return;
     const wp=widthPref||w.width;
-    const options=partsFor(series,section,wp,glazing).map(p=>p.part);
-    const part=pickPart(series,section,wp,picks[section],glazing), rate=partRate(part,finish);
+    const options=partsFor(series,section,wp,glazing,glassThkMm).map(p=>p.part);
+    const part=pickPart(series,section,wp,picks[section],glazing,glassThkMm), rate=partRate(part,finish);
     sec.push({label,section,options,part:part?part.part:'—',width:part?part.width:'',length:+length.toFixed(2),unit:'rft',rate,amount:length*rate});
   };
 
@@ -4486,7 +4502,7 @@ function calcWindow(w){
     if(q>0) addHw(name,q,num(acc.rate),acc.unit||'pc');
   });
   // glass panes + spacer (priced from glass rate table, by type + thickness)
-  const dblG=w.glazing==='Double', hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
+  const hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
   if(hasGlass){ const gA=glassOf(w);
     // use areaSftPer = per single window; breakdown display multiplies by r.qty
     const unitsPerWin=(w.wtype==='sliding')?(num(w.nShutters)||2):1;
@@ -4532,7 +4548,9 @@ function prodGroups(w){
   const qty=num(w.qty)||1, rup=x=>Math.ceil(x), groups=[], series=w.series;
   const g=(name,part,pieces)=>{ const pf=pieces.filter(p=>p.len>0&&p.cnt>0); if(pf.length) groups.push({name,part,pieces:pf}); };
   /* pickFor: returns the actual part row selected for a section (carries .cutDed from DB row) */
-  const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],w.glazing||'Single');
+  const _glaz=w.glazing||'Single', _dblG=_glaz==='Double';
+  const _gThkMm=_dblG?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
+  const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],_glaz,_gThkMm);
   const partOf=(sec)=>{ const p=pickFor(sec); return p?p.part+(p.width?(' '+p.width):''):''; };
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
@@ -4877,8 +4895,10 @@ function breakdownHTML(r,wid){
     }
   }
   const profileCell=s=>{
+    const isBid=s.section.startsWith('Bidding');
+    const rangedAuto=isBid&&(s.options||[]).length===1&&s.part!=='—';
     if((s.options||[]).length>1 && wid) return `<select onchange="pickPartFor('${wid}','${jsq(s.section)}',this.value)" style="max-width:150px;padding:2px 6px;font-size:12px;display:inline-block;width:auto">${s.options.map(o=>`<option ${o===s.part?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-    return esc(s.part);
+    return esc(s.part)+(rangedAuto?`<span style="font-size:10px;background:var(--chip);color:var(--muted);border-radius:4px;padding:1px 5px;margin-left:4px">auto</span>`:'');
   };
   return `<div class="row" style="margin-top:6px">
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminiumAfterDisc*r.qty)}${r.alDiscPct?`<span style="font-size:10px;opacity:.7;margin-left:4px">(${r.alDiscPct}% off)</span>`:''}</span></div>
@@ -5337,6 +5357,7 @@ function renderSysTable(){
   // Section checkboxes grouped
   const secCks=(p,i)=>{
     const secs=partSections(p);
+    const hasBidding=secs.some(s=>s.startsWith('Bidding'));
     return SEC_GROUPS.map(([grp,members])=>{
       const boxes=members.map(s=>{
         const chk=secs.includes(s)?'checked':'';
@@ -5344,8 +5365,21 @@ function renderSysTable(){
         return `<label style="display:inline-flex;align-items:center;gap:2px;font-size:10.5px;white-space:nowrap;cursor:pointer;margin-right:4px">
           <input type="checkbox" ${chk} style="width:12px;height:12px" onchange="toggleSysSection('${jsq(sys)}',${i},'${s}',this.checked)">${lbl||s}</label>`;
       }).join('');
-      return `<span style="display:inline-flex;align-items:center;margin-right:8px;margin-bottom:2px">
-        <span style="font-size:10px;font-weight:600;color:var(--muted,#888);margin-right:3px;white-space:nowrap">${grp}:</span>${boxes}</span>`;
+      // For Bidding row: show Glass Min/Max inputs when any Bidding section is ticked
+      const glassInputs=(grp==='Bidding'&&hasBidding)?
+        `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:6px;font-size:10.5px">
+          <span style="color:var(--muted);font-weight:600">Glass:</span>
+          <input type="number" min="0" placeholder="min" title="Min glass thickness (mm)" value="${p.glassMin||''}"
+            style="width:42px;padding:2px 4px;font-size:11px;text-align:center"
+            onchange="setSysPartField('${jsq(sys)}',${i},'glassMin',this.value?+this.value:null)">
+          <span style="color:var(--muted)">–</span>
+          <input type="number" min="0" placeholder="max" title="Max glass thickness (mm)" value="${p.glassMax||''}"
+            style="width:42px;padding:2px 4px;font-size:11px;text-align:center"
+            onchange="setSysPartField('${jsq(sys)}',${i},'glassMax',this.value?+this.value:null)">
+          <span style="color:var(--muted)">mm</span>
+        </span>`:'';
+      return `<span style="display:inline-flex;align-items:center;flex-wrap:wrap;margin-right:8px;margin-bottom:2px">
+        <span style="font-size:10px;font-weight:600;color:var(--muted,#888);margin-right:3px;white-space:nowrap">${grp}:</span>${boxes}${glassInputs}</span>`;
     }).join('');
   };
 
@@ -5389,8 +5423,9 @@ function toggleSysWidth(sys,i,w,checked){
 }
 function setSysPartField(sys,i,field,v){
   const p=DB.rates.systems[sys][i];
-  if(field==='cutDedH'||field==='cutDedW') p[field]=+v;
-  else p[field]=(typeof v==='string'?v.trim():v);
+  if(field==='cutDedH'||field==='cutDedW'||field==='glassMin'||field==='glassMax'){
+    if(v===null||v===''||v===undefined) delete p[field]; else p[field]=+v;
+  } else p[field]=(typeof v==='string'?v.trim():v);
   save(); toast('Saved');
 }
 function setPartRate(sys,i,fin,v){ const p=DB.rates.systems[sys][i]; if(v==='')delete p.rates[fin]; else p.rates[fin]=num(v); save(); toast('Saved'); }
