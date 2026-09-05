@@ -5249,7 +5249,12 @@ function renderRates(){
          <td class="right"><input type="number" style="max-width:90px;text-align:right" value="${s.rate}" onchange="DB.rates.spacers[${i}].rate=num(this.value);save();toast('Saved')"></td>
          <td class="right"><button class="ghost sm danger" onclick="DB.rates.spacers.splice(${i},1);save();renderRates()">✕</button></td></tr>`).join('')}</tbody></table></div></div>
    </div>
-   <div class="card" style="margin-top:16px"><div class="hd"><b>Aluminium Profiles by System</b><button class="sm" onclick="addSysPart()">+ Add Part</button></div><div class="bd">
+   <div class="card" style="margin-top:16px"><div class="hd"><b>Aluminium Profiles by System</b>
+     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+       <button class="sm" onclick="addSysPart()">+ Add Part</button>
+       <button class="sm green" onclick="promptAddSystem()">+ New System</button>
+       <button class="sm danger" onclick="promptDelSystem()">Delete System</button>
+     </div></div><div class="bd">
      <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
      <div id="sysTable" style="overflow:auto"></div></div></div>
    <div class="card" style="margin-top:16px">
@@ -5374,6 +5379,33 @@ function addSysPart(){
   save(); renderSysTable();
   /* scroll to bottom of table */
   const t=document.getElementById('sysTable'); if(t) t.scrollTop=t.scrollHeight;
+}
+function promptAddSystem(){
+  const name=prompt('New system name (e.g. INNOVA_PLUS):');
+  if(!name||!name.trim()) return;
+  const key=name.trim().toUpperCase();
+  if(DB.rates.systems[key]){ toast('System "'+key+'" already exists'); return; }
+  DB.rates.systems[key]=[];
+  save();
+  toast('System "'+key+'" created — use + Add Part to add profiles');
+  renderRates();
+  /* select the new system */
+  const sel=document.getElementById('sysSel');
+  if(sel){ sel.value=key; renderSysTable(); }
+}
+function promptDelSystem(){
+  const raw=val('sysSel')||Object.keys(DB.rates.systems)[0];
+  const sys=raw.replace(' (no rates)','');
+  if(SEED.systems&&SEED.systems[sys]){
+    if(!confirm('⚠ "'+sys+'" is a built-in system. Deleting it removes all its parts and rates and cannot be undone. Continue?'))return;
+  } else {
+    if(!confirm('Delete the entire system "'+sys+'" and all its parts? This cannot be undone.'))return;
+  }
+  delete DB.rates.systems[sys];
+  if(DB.rates.systemsDeleted) delete DB.rates.systemsDeleted[sys];
+  save();
+  toast('System "'+sys+'" deleted');
+  renderRates();
 }
 function delSysPart(sys,i){
   if(!confirm('Remove this part from '+sys+'?'))return;
