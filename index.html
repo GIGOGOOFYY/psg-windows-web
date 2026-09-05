@@ -4099,6 +4099,8 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(!s.rates.casementHardware) s.rates.casementHardware={};
   if(!s.rates.slidingHardware) s.rates.slidingHardware={};
   if(!s.rates.fixedHardware) s.rates.fixedHardware={};
+  /* ---- migrate old hinge winType: 'casement' used to mean both casement & awning ---- */
+  if(s.rates.hingeMeta){ Object.keys(s.rates.hingeMeta).forEach(k=>{ if((s.rates.hingeMeta[k].winType||'')==='casement' && !s.rates.hingeMeta[k]._wt_migrated){ s.rates.hingeMeta[k].winType='both'; s.rates.hingeMeta[k]._wt_migrated=true; } }); }
   /* re-attach catalogue images from separate localStorage keys */
   if(s.rates&&s.rates.catalogue){
     s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
@@ -4202,13 +4204,26 @@ function modelsFor(brand,lockType,wtype){
 }
 // Items stored in DB.rates.hinges that are accessories (not real hinge types) — excluded from dropdown
 const HINGE_ACCESSORY_KEYS=['FC-310'];
-function hingesFor(series){
+function hingesFor(series, thermal, wtype){
+  // thermal = 'YES' (thermal break window) | 'NO' (non-thermal) | undefined (show all)
+  // wtype = 'casement' | 'awning' | 'casement+fixed' | 'awning+fixed' — used to filter by winType
   const seed=IL.hinges[series]||[];
-  // also include user-added hinges from DB.rates.hinges (filtered to casement/both winType)
+  // include user-added hinges from DB.rates.hinges filtered by winType and thermal
   // exclude accessory keys like FC-310 which are peg stays added automatically, not selectable hinge types
+  const isCase=!wtype||wtype==='casement'||wtype==='casement+fixed';
+  const isAwn=wtype==='awning'||wtype==='awning+fixed';
   const db=Object.keys(DB.rates.hinges||{}).filter(k=>{
     if(HINGE_ACCESSORY_KEYS.includes(k)) return false;
-    const m=getHingeMeta(k); return m.winType==='casement'||m.winType==='both'||!m.winType;
+    const m=getHingeMeta(k);
+    // winType filter: 'casement'=casement only, 'awning'=awning only, 'both'=either
+    const wt=m.winType||'both';
+    if(isCase && wt==='awning') return false;
+    if(isAwn  && wt==='casement') return false;
+    // thermal filter: 'Any' always passes; 'Thermal' only for thermal windows; 'Non-Thermal' only for non-thermal
+    const ht=m.thermal||'Any';
+    if(thermal==='YES' && ht==='Non-Thermal') return false;
+    if(thermal==='NO'  && ht==='Thermal')     return false;
+    return true;
   });
   return [...new Set([...seed,...db])];
 }
@@ -4776,7 +4791,7 @@ function winFormHTML(w,r){
   const wtype=w.wtype||'casement';
   const bind=`oninput="upd('${w.id}',this)" onchange="upd('${w.id}',this)"`;
   const seriesList=seriesFor(wtype,w.thermal||'NO');
-  const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series);
+  const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series,w.thermal||'NO',wtype);
   const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
   const isFixed=wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed',
         isSlide=wtype==='sliding'||wtype==='sliding+fixed',
@@ -4905,9 +4920,10 @@ function upd(id,el){
   else w[k]= el.type==='number'?(el.value===''?'':num(el.value)):el.value;
   // cascade resets
   if(k==='category'){ w.wtype=typeFor(w.value=el.value); if(w.wtype==='sliding')w.thermal='NO';
-    const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(lockTypesFor(w.wtype)||[])[0]||''; w.handleBrand='';w.handle='';w.hinge=''; }
+    const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(lockTypesFor(w.wtype)||[])[0]||''; w.handleBrand='';w.handle='';w.hinge='';
+    if(!hingesFor(w.series,w.thermal||'NO',w.wtype).includes(w.hinge))w.hinge=''; }
   if(k==='thermal'){ const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.handleBrand='';w.handle=''; w.hinge=''; }
-  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series).includes(w.hinge))w.hinge=''; }
+  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series,w.thermal||'NO',w.wtype).includes(w.hinge))w.hinge=''; }
   if(k==='width'){ w.picks={}; }
   if(k==='lockType'){ if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} }
   if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType,w.wtype).includes(w.handle)) w.handle=''; }
@@ -5216,14 +5232,19 @@ function renderRates(){
          <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${v}" onchange="DB.rates.handles['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
          <td><button class="ghost sm danger" onclick="delHandle('${jsq(k)}')">✕</button></td></tr>`; }).join('')}
      </tbody></table><datalist id="brandList"><option>KINLONG</option><option>KEVATA</option><option>HOPPO</option><option>CHINESE</option><option>LOCAL</option></datalist></div></div>
-     <div class="card"><div class="hd"><b>Hinges</b><button class="sm" onclick="addHinge()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>Model</th><th>Brand</th><th>Window Type</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
-       ${Object.entries(DB.rates.hinges).map(([k,v])=>{ const hm=getHingeMeta(k); return `<tr>
-         <td><input style="max-width:120px" value="${esc(k)}" onchange="renameHinge('${jsq(k)}',this.value)"></td>
-         <td><input list="brandList" style="max-width:100px" value="${esc(hm.brand||'')}" placeholder="e.g. KINLONG" onchange="setHingeMeta('${jsq(k)}','brand',this.value)"></td>
-         <td><select style="max-width:130px" onchange="setHingeMeta('${jsq(k)}','winType',this.value)">
-           <option value="casement" ${(hm.winType||'casement')==='casement'?'selected':''}>Casement &amp; Awning</option>
-           <option value="both" ${hm.winType==='both'?'selected':''}>Both</option></select></td>
-         <td class="right"><input style="max-width:90px;text-align:right" type="number" value="${v}" onchange="DB.rates.hinges['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
+     <div class="card"><div class="hd"><b>Hinges</b><button class="sm" onclick="addHinge()">+ Add</button></div><div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>Model</th><th>Brand</th><th>Window Type</th><th>Thermal</th><th class="right">Rate (Rs)</th><th></th></tr></thead><tbody>
+       ${Object.entries(DB.rates.hinges).map(([k,v])=>{ const hm=getHingeMeta(k); const wt=hm.winType||'both'; const ht=hm.thermal||'Any'; return `<tr>
+         <td><input style="max-width:110px" value="${esc(k)}" onchange="renameHinge('${jsq(k)}',this.value)"></td>
+         <td><input list="brandList" style="max-width:90px" value="${esc(hm.brand||'')}" placeholder="e.g. KINLONG" onchange="setHingeMeta('${jsq(k)}','brand',this.value)"></td>
+         <td><select style="max-width:110px" onchange="setHingeMeta('${jsq(k)}','winType',this.value)">
+           <option value="casement" ${wt==='casement'?'selected':''}>Casement</option>
+           <option value="awning" ${wt==='awning'?'selected':''}>Awning</option>
+           <option value="both" ${wt==='both'?'selected':''}>Both</option></select></td>
+         <td><select style="max-width:120px" onchange="setHingeMeta('${jsq(k)}','thermal',this.value)">
+           <option value="Any" ${ht==='Any'?'selected':''}>Any</option>
+           <option value="Non-Thermal" ${ht==='Non-Thermal'?'selected':''}>Non-Thermal</option>
+           <option value="Thermal" ${ht==='Thermal'?'selected':''}>Thermal</option></select></td>
+         <td class="right"><input style="max-width:80px;text-align:right" type="number" value="${v}" onchange="DB.rates.hinges['${jsq(k)}']=num(this.value);save();toast('Saved')"></td>
          <td><button class="ghost sm danger" onclick="delHinge('${jsq(k)}')">✕</button></td></tr>`; }).join('')}
      </tbody></table></div></div></div>
    <div class="card" style="margin-top:16px">
@@ -5555,11 +5576,11 @@ function setHandleMeta(name,field,val){ if(!DB.rates.handleMeta) DB.rates.handle
 function addHandle(){ const n='New Handle '+Date.now().toString().slice(-4); DB.rates.handles[n]=0; if(!DB.rates.handleMeta) DB.rates.handleMeta={}; DB.rates.handleMeta[n]={brand:'',lockType:'',winType:'casement'}; save(); renderRates(); }
 function delHandle(k){ if(!confirm('Remove handle "'+k+'"?'))return; delete DB.rates.handles[k]; if(DB.rates.handleMeta) delete DB.rates.handleMeta[k]; save(); renderRates(); }
 function renameHandle(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.handles[oldKey]; delete DB.rates.handles[oldKey]; DB.rates.handles[newKey]=v; if(DB.rates.handleMeta&&DB.rates.handleMeta[oldKey]){ DB.rates.handleMeta[newKey]=DB.rates.handleMeta[oldKey]; delete DB.rates.handleMeta[oldKey]; } save(); }
-function addHinge(){ const n='New Hinge '+Date.now().toString().slice(-4); DB.rates.hinges[n]=0; if(!DB.rates.hingeMeta) DB.rates.hingeMeta={}; DB.rates.hingeMeta[n]={brand:'',winType:'casement'}; save(); renderRates(); }
+function addHinge(){ const n='New Hinge '+Date.now().toString().slice(-4); DB.rates.hinges[n]=0; if(!DB.rates.hingeMeta) DB.rates.hingeMeta={}; DB.rates.hingeMeta[n]={brand:'',winType:'both',thermal:'Any'}; save(); renderRates(); }
 function delHinge(k){ if(!confirm('Remove hinge "'+k+'"?'))return; delete DB.rates.hinges[k]; save(); renderRates(); }
 function renameHinge(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.hinges[oldKey]; delete DB.rates.hinges[oldKey]; DB.rates.hinges[newKey]=v; if(DB.rates.hingeMeta&&DB.rates.hingeMeta[oldKey]){DB.rates.hingeMeta[newKey]=DB.rates.hingeMeta[oldKey];delete DB.rates.hingeMeta[oldKey];} save(); }
 function setHingeMeta(name,field,val){ if(!DB.rates.hingeMeta) DB.rates.hingeMeta={}; if(!DB.rates.hingeMeta[name]) DB.rates.hingeMeta[name]={}; DB.rates.hingeMeta[name][field]=val; save(); toast('Saved'); }
-function getHingeMeta(name){ const db=(DB.rates.hingeMeta||{})[name]; return db||{brand:'',winType:'casement'}; }
+function getHingeMeta(name){ const db=(DB.rates.hingeMeta||{})[name]; return db||{brand:'',winType:'both',thermal:'Any'}; }
 function renderHandleAccTable(){
   const h=document.getElementById('haHandleSel'); if(!h) return;
   const handle=h.value; if(!handle) return;
