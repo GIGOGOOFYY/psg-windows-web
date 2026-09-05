@@ -4330,24 +4330,22 @@ function partsFor(series,section,widthPref,glazing,glassThkMm){
     if(tagged.length) parts=tagged;
     else if(hasTags) parts=parts.filter(p=>!getGlaze(series,p.part,section,p.width));
   }
-  // Glass-thickness filter: only applies to Bidding sections; parts with no range always pass
+  // Glass-thickness filter: only applies to Bidding sections
   if(section.startsWith('Bidding') && glassThkMm>0){
-    const ranged=parts.filter(p=>{ const mn=num(p.glassMin),mx=num(p.glassMax); if(!mn&&!mx) return false; return glassThkMm>=mn&&glassThkMm<=mx; });
-    if(ranged.length) return ranged; // matched by range — use these
-    // fall through: no parts have a matching range → return unranged parts as fallback
-    const unranged=parts.filter(p=>!num(p.glassMin)&&!num(p.glassMax));
-    if(unranged.length) return unranged;
+    const anyRanged=parts.some(p=>num(p.glassMin)||num(p.glassMax));
+    if(anyRanged){
+      // System has thickness ranges configured — only return the matching ones; empty if none match
+      return parts.filter(p=>{ const mn=num(p.glassMin),mx=num(p.glassMax); if(!mn&&!mx) return false; return glassThkMm>=mn&&glassThkMm<=mx; });
+    }
+    // No ranges configured at all → return all (system not yet set up for thickness filtering)
   }
   return parts;
 }
 function pickPart(series,section,widthPref,pickedName,glazing,glassThkMm){
   const parts=partsFor(series,section,widthPref,glazing,glassThkMm);
   if(!parts.length) return null;
-  // For Bidding: auto-select by glass thickness (ignore manual pick if it's not in filtered list)
-  if(section.startsWith('Bidding') && glassThkMm>0){
-    const ranged=parts.filter(p=>{ const mn=num(p.glassMin),mx=num(p.glassMax); return mn>0||mx>0; });
-    if(ranged.length) return ranged[0]; // auto-pick first thickness-matched part
-  }
+  // For Bidding with thickness filtering active: auto-select the matched part
+  if(section.startsWith('Bidding') && glassThkMm>0 && parts.length===1) return parts[0];
   if(pickedName){ const m=parts.find(p=>p.part===pickedName); if(m) return m; }
   return parts[0];
 }
@@ -4898,7 +4896,7 @@ function breakdownHTML(r,wid){
     const isBid=s.section.startsWith('Bidding');
     const rangedAuto=isBid&&(s.options||[]).length===1&&s.part!=='—';
     if((s.options||[]).length>1 && wid) return `<select onchange="pickPartFor('${wid}','${jsq(s.section)}',this.value)" style="max-width:150px;padding:2px 6px;font-size:12px;display:inline-block;width:auto">${s.options.map(o=>`<option ${o===s.part?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-    return esc(s.part)+(rangedAuto?`<span style="font-size:10px;background:var(--chip);color:var(--muted);border-radius:4px;padding:1px 5px;margin-left:4px">auto</span>`:'');
+    return esc(s.part);
   };
   return `<div class="row" style="margin-top:6px">
     <div style="flex:1;min-width:260px" class="card"><div class="hd"><b>Aluminium sections</b><span class="chip">${money(r.aluminiumAfterDisc*r.qty)}${r.alDiscPct?`<span style="font-size:10px;opacity:.7;margin-left:4px">(${r.alDiscPct}% off)</span>`:''}</span></div>
