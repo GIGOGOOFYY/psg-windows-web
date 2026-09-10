@@ -6105,8 +6105,31 @@ function doLogin(){
   document.getElementById('loginBg').classList.remove('show'); document.body.classList.remove('locked');
   buildNav(); go('dashboard');
   if(ME.role==='admin') startPendingPoll();
+  startInactivityTimer();
 }
-function logout(){ ME=null; localStorage.removeItem('psg_session'); renderLogin(); }
+function logout(forced){ ME=null; localStorage.removeItem('psg_session'); stopInactivityTimer(); renderLogin(); if(forced) toast('⏱ Signed out due to inactivity'); }
+
+/* ---- Inactivity auto-logout ---- */
+let _inactTimer=null, _inactWarnTimer=null, _lastActivity=Date.now();
+function _resetActivity(){ _lastActivity=Date.now(); }
+function stopInactivityTimer(){ clearInterval(_inactTimer); clearTimeout(_inactWarnTimer); _inactTimer=null; _inactWarnTimer=null; }
+function startInactivityTimer(){
+  stopInactivityTimer();
+  const mins=num((DB.security||{}).inactivityMins)||0;
+  if(!mins) return; // 0 = disabled
+  const ms=mins*60*1000, warnMs=Math.max(ms-60000,ms*0.9); // warn 1 min before (or 10% before)
+  _lastActivity=Date.now();
+  _inactTimer=setInterval(()=>{ if(ME && Date.now()-_lastActivity>=ms) logout(true); },15000);
+  // warning toast
+  _inactWarnTimer=setTimeout(function schedWarn(){
+    if(!ME) return;
+    const remaining=Math.round((ms-(Date.now()-_lastActivity))/1000);
+    if(remaining<=60 && remaining>0){ toast('⏱ You will be signed out in '+remaining+' seconds due to inactivity'); }
+    _inactWarnTimer=setTimeout(schedWarn,15000);
+  }, warnMs);
+}
+['mousemove','mousedown','keydown','touchstart','scroll'].forEach(ev=>
+  document.addEventListener(ev,_resetActivity,{passive:true}));
 function buildNav(){
   const items=[['dashboard','▚','Dashboard'],['quotes','▤','Quotations'],['catalogue','▦','Catalogue'],['rates','₨','Rates'],['admin','⚙','Admin Console']];
   const nav=document.getElementById('navItems');
@@ -6235,6 +6258,15 @@ function renderAdmin(){
        <td class="right"><button class="ghost sm danger" onclick="delUser(${i})">✕</button></td></tr>`).join('')}
      </tbody></table></div>
    <div class="bd muted" style="font-size:12px">Admins always have every permission. Changes save immediately${SB?' and sync to Supabase':''}.</div></div>
+
+  <div class="card"><div class="hd"><b>Auto Sign-Out (Inactivity)</b></div>
+   <div class="bd" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+     <span class="muted" style="font-size:13px">Sign out after</span>
+     <select style="width:auto" onchange="DB.security.inactivityMins=+this.value;save();startInactivityTimer();toast('Saved')">
+       ${[0,5,10,15,20,30,60,120].map(m=>`<option value="${m}" ${(num((DB.security||{}).inactivityMins)||0)===m?'selected':''}>${m===0?'Never (disabled)':m+' minutes'}</option>`).join('')}
+     </select>
+     <span class="muted" style="font-size:12px">of inactivity. A warning appears 1 minute before sign-out.</span>
+   </div></div>
 
   <div class="card"><div class="hd"><b>Device Access Restriction</b>
      <div class="seg"><button class="${dm==='off'?'on':''}" onclick="setDeviceMode('off')">Off (any device)</button><button class="${dm==='global'?'on':''}" onclick="setDeviceMode('global')">On (approved devices only)</button></div></div>
@@ -6365,7 +6397,7 @@ function autoPullIfEmpty(){ if(SB && (DB.quotes||[]).length===0) cloudPull(); }
   if(SB){ try{ await cloudPullAuth(); }catch(e){} }   // reflect cloud users/permissions/devices
   let sess=null; try{sess=JSON.parse(localStorage.getItem('psg_session'));}catch(e){}
   const u=sess&&findUser(sess.u);
-  if(u && deviceApproved(u)){ ME=u; buildNav(); go('dashboard'); autoPullIfEmpty(); }
+  if(u && deviceApproved(u)){ ME=u; buildNav(); go('dashboard'); autoPullIfEmpty(); startInactivityTimer(); }
   else { renderLogin(); }
 })();
 
