@@ -128,6 +128,7 @@
   #printRoot table{font-size:12px}#printRoot th{color:#333;border-bottom:2px solid #333}#printRoot td{border-bottom:1px solid #ccc}
   #printRoot h3{margin:18px 0 6px}
   .login-bg{position:fixed;inset:0;background:linear-gradient(135deg,#0d2b57,#0b1622);display:none;align-items:center;justify-content:center;z-index:300;padding:20px}
+  .qro input,.qro select,.qro textarea{ pointer-events:none!important; background:var(--bg2,#f5f8f6)!important; color:var(--muted)!important; cursor:default!important; }
   .login-bg.show{display:flex}
   .login-box{background:var(--panel);color:var(--text);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:100%;max-width:380px;padding:28px}
   .login-box .logo{border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
@@ -4086,6 +4087,13 @@ const HANDLE_ACC_DEFAULT={
   ]
 };
 
+const PERM_DEFS=[
+  {key:'editRates',   label:'Edit Rates',    desc:'Can change price values in the Rates page',    def:true},
+  {key:'editQuotes',  label:'Edit Quotes',   desc:'Can open and modify existing quotations',      def:false},
+  {key:'deleteQuotes',label:'Delete Quotes', desc:'Can permanently delete quotations',             def:false},
+];
+function perm(key){ if(!ME) return false; if(ME.role==='admin') return true; const p=ME.perms||{}; return (key in p)?!!p[key]:(PERM_DEFS.find(d=>d.key===key)||{def:false}).def; }
+let QRO=false; // quote read-only flag; set in renderEditor()
 let DB=load();
 function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}catch(e){}
   if(!s||!s.rates) s={rates:structuredClone(SEED), quotes:[], seq:1};
@@ -4101,6 +4109,8 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(!s.rates.fixedHardware) s.rates.fixedHardware={};
   /* ---- migrate old hinge winType: 'casement' used to mean both casement & awning ---- */
   if(s.rates.hingeMeta){ Object.keys(s.rates.hingeMeta).forEach(k=>{ if((s.rates.hingeMeta[k].winType||'')==='casement' && !s.rates.hingeMeta[k]._wt_migrated){ s.rates.hingeMeta[k].winType='both'; s.rates.hingeMeta[k]._wt_migrated=true; } }); }
+  /* migrate: ensure all users have perms object */
+  if(s.users) s.users.forEach(u=>{ if(!u.perms) u.perms={editRates:true,editQuotes:false,deleteQuotes:false}; });
   /* re-attach catalogue images from separate localStorage keys */
   if(s.rates&&s.rates.catalogue){
     s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
@@ -4128,6 +4138,7 @@ function save(){
   }
   try{ localStorage.setItem(LS_KEY,JSON.stringify(dbCopy)); }
   catch(e){ toast('⚠ Save failed — browser storage full. Try clearing old data.','error'); console.error('save() quota error',e); }
+  debouncedCloudSaveRates();
 }
 
 /* device id + session */
@@ -4692,7 +4703,7 @@ function renderDashboard(){
     <div class="bd" style="padding:0">${qs.length?`<table><thead><tr><th>Quote #</th><th>Customer</th><th>Date</th><th class="center">Windows</th><th class="right">Value</th><th></th></tr></thead>
      <tbody>${qs.slice().reverse().map(q=>`<tr><td><b>${esc(q.quoteNo||'—')}</b></td><td>${esc(q.customer||'—')}</td><td>${q.date||'—'}</td>
        <td class="center">${(q.windows||[]).length}</td><td class="right">${money(quoteTotal(q))}</td>
-       <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">Open</button></td></tr>`).join('')}</tbody></table>`
+       <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">${perm('editQuotes')?'Open':'View'}</button></td></tr>`).join('')}</tbody></table>`
      :`<div class="empty"><div class="big">▤</div>No quotations yet.<br><br><button onclick="newQuote()">+ Create your first quotation</button></div>`}</div></div>`;
 }
 /* ---------- Quotes list ---------- */
@@ -4702,8 +4713,8 @@ function renderQuotes(){
    <div class="bd" style="padding:0">${qs.length?`<table><thead><tr><th>Quote #</th><th>Customer</th><th>Ref</th><th>Sales</th><th>Date</th><th class="center">Windows</th><th class="right">Value</th><th></th></tr></thead>
     <tbody>${qs.slice().reverse().map(q=>`<tr><td><b>${esc(q.quoteNo||'—')}</b></td><td>${esc(q.customer||'—')}</td><td>${esc(q.ref||'')}</td><td>${esc(q.sales||'')}</td>
       <td>${q.date||''}</td><td class="center">${(q.windows||[]).length}</td><td class="right">${money(quoteTotal(q))}</td>
-      <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">Open</button>
-        <button class="ghost sm danger" onclick="delQuote('${q.id}')">✕</button></td></tr>`).join('')}</tbody></table>`
+      <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">${perm('editQuotes')?'Open':'View'}</button>
+        ${perm('deleteQuotes')?`<button class="ghost sm danger" onclick="delQuote('${q.id}')">✕</button>`:''}</td></tr>`).join('')}</tbody></table>`
     :`<div class="empty"><div class="big">▤</div>No quotations yet.<br><br><button onclick="newQuote()">+ New Quotation</button></div>`}</div></div>`;
 }
 function newQuote(){
@@ -4718,7 +4729,10 @@ function curr(){ return DB.quotes.find(q=>q.id===CURR); }
 /* ---------- Editor (tabs: Windows / Design Summary / Production) ---------- */
 function renderEditor(){
   const q=curr(); if(!q){go('quotes');return;}
+  QRO=!perm('editQuotes');
   C().innerHTML=`
+  <div id="ed-wrap" class="${QRO?'qro':''}">
+  ${QRO?`<div style="background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#856404">View Only</span><span class="muted" style="font-size:13px"> — You don't have permission to edit this quotation. Contact an admin to make changes.</span></div>`:''}
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:14px">
     <button class="ghost sm" onclick="go('quotes')">← Back</button>
     <div class="seg">
@@ -4737,8 +4751,8 @@ function renderEditor(){
     <div class="field"><label>Sales Person</label><input id="q_sales" value="${esc(q.sales||'')}"></div>
     <div class="field"><label>Deliver To</label><input id="q_deliver" value="${esc(q.deliver||'')}" placeholder="Site / address"></div>
   </div></div></div>
-  <div id="subview"></div>`;
-  ['q_no','q_cust','q_date','q_ref','q_sales','q_deliver'].forEach(id=>{const e=document.getElementById(id);if(e)e.addEventListener('change',saveMeta);});
+  <div id="subview"></div></div>`;
+  ['q_no','q_cust','q_date','q_ref','q_sales','q_deliver'].forEach(id=>{ const e=document.getElementById(id); if(e){ if(QRO){ e.setAttribute('readonly',''); e.style.background='var(--bg2,#f5f8f6)'; e.style.pointerEvents='none'; } else e.addEventListener('change',saveMeta); } });
   renderSub();
 }
 function setSub(s){ SUB=s; document.querySelectorAll('.seg button').forEach(b=>b.classList.remove('on')); renderSub();
@@ -4781,9 +4795,7 @@ function renderBOM(){
 function renderWindows(){
   const q=curr();
   document.getElementById('subview').innerHTML=`
-   <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px">
-     <button class="sm" onclick="openCataloguePicker()">+ From catalogue</button>
-     <button class="green sm" onclick="addWindow()">+ Blank window</button></div>
+   ${QRO?'':` <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px"><button class="sm" onclick="openCataloguePicker()">+ From catalogue</button><button class="green sm" onclick="addWindow()">+ Blank window</button></div>`}
    <div id="winList">${(q.windows||[]).map((w,i)=>winRowHTML(w,i)).join('')||'<div class="empty"><div class="big">🪟</div>No windows yet.</div>'}</div>
    <div class="card" style="margin-top:16px"><div class="bd row" style="justify-content:space-between;align-items:center">
      <div><span class="muted">Quotation total (${(q.windows||[]).length} line items)</span>
@@ -6051,13 +6063,15 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
     save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
 async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); toast('Pushed '+DB.quotes.length+' quotes + users/devices to cloud'); }
-async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]})));}catch(e){console.warn('users',e);} }
+async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
 async function cloudSaveDevices(){ if(!SB)return; try{ await SB.from('psg_devices').delete().neq('id','__none__'); if((DB.devices||[]).length) await SB.from('psg_devices').insert(DB.devices.map(d=>({id:d.id,label:d.label||'',app_user:d.user||'',device_mode:DB.security.deviceMode})));
     await SB.from('psg_settings').upsert({key:'deviceMode',value:DB.security.deviceMode}); }catch(e){console.warn('devices',e);} }
 async function cloudPullAuth(){ if(!SB)return;
   try{ const {data:us}=await SB.from('psg_users').select('*'); if(us&&us.length) DB.users=us.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||['dashboard'],devices:[]}));
     const {data:ds}=await SB.from('psg_devices').select('*'); if(ds) DB.devices=ds.map(d=>({id:d.id,label:d.label,user:d.app_user,approvedAt:''}));
     const {data:st}=await SB.from('psg_settings').select('*').eq('key','deviceMode').maybeSingle(); if(st&&st.value)DB.security.deviceMode=st.value;
+    /* restore perms */ try{ const {data:pk}=await SB.from('kv').select('val').eq('key','_perms').maybeSingle(); if(pk&&pk.val){ const pm=JSON.parse(pk.val); DB.users.forEach(u=>{ u.perms=pm[u.username]||{editRates:true,editQuotes:false,deleteQuotes:false}; }); } }catch(ep){}
+    /* restore rates */ await cloudPullRates();
     save(); }catch(e){console.warn('pull auth',e);} }
 function openCloud(){
   const c=cloudCfg||{url:'',key:''};
@@ -6249,12 +6263,14 @@ function renderAdmin(){
   </div>
   <div class="card" style="margin-bottom:16px"><div class="hd"><b>Users & Permissions</b><button class="sm" onclick="addUser()">+ Add user</button></div>
    <div class="bd" style="padding:0;overflow:auto"><table><thead><tr><th>User</th><th>Password</th><th>Role</th>
-     ${views.map(v=>`<th class="center">${v}</th>`).join('')}<th></th></tr></thead><tbody>
+     ${views.map(v=>`<th class="center" style="font-size:11px">${v}</th>`).join('')}
+     ${PERM_DEFS.map(p=>`<th class="center" style="font-size:11px;background:var(--bg2);padding:6px 8px" title="${p.desc}">${p.label}</th>`).join('')}<th></th></tr></thead><tbody>
      ${DB.users.map((u,i)=>`<tr>
        <td><input style="max-width:120px" value="${esc(u.username)}" onchange="setUser(${i},'username',this.value)"></td>
        <td><input style="max-width:120px" value="${esc(u.password)}" onchange="setUser(${i},'password',this.value)"></td>
        <td><select style="max-width:100px" onchange="setUser(${i},'role',this.value)"><option ${u.role==='user'?'selected':''}>user</option><option ${u.role==='admin'?'selected':''}>admin</option></select></td>
        ${views.map(v=>`<td class="center"><input type="checkbox" style="width:auto" ${(u.role==='admin'||(u.views||[]).includes(v))?'checked':''} ${u.role==='admin'?'disabled':''} onchange="toggleView(${i},'${v}',this.checked)"></td>`).join('')}
+       ${PERM_DEFS.map(p=>`<td class="center" style="background:var(--bg2)"><input type="checkbox" style="width:auto" title="${p.desc}" ${(u.role==='admin'||((u.perms||{})[p.key]!==undefined?(u.perms||{})[p.key]:p.def))?'checked':''} ${u.role==='admin'?'disabled':''} onchange="togglePerm(${i},'${p.key}',this.checked)"></td>`).join('')}
        <td class="right"><button class="ghost sm danger" onclick="delUser(${i})">✕</button></td></tr>`).join('')}
      </tbody></table></div>
    <div class="bd muted" style="font-size:12px">Admins always have every permission. Changes save immediately${SB?' and sync to Supabase':''}.</div></div>
@@ -6298,8 +6314,9 @@ function renderAdmin(){
        </tr>
      </tbody></table></div></div>`;
 }
-function addUser(){ DB.users.push({username:'newuser',password:'changeme',role:'user',views:['dashboard'],devices:[]}); save(); cloudSaveUsers(); renderAdmin(); }
+function addUser(){ DB.users.push({username:'newuser',password:'changeme',role:'user',views:['dashboard'],devices:[],perms:{editRates:true,editQuotes:false,deleteQuotes:false}}); save(); cloudSaveUsers(); renderAdmin(); }
 function setUser(i,k,v){ DB.users[i][k]=v; if(k==='role'&&v==='admin')DB.users[i].views=SEED.allViews.slice(); save(); cloudSaveUsers(); if(k==='role')renderAdmin(); }
+function togglePerm(i,key,on){ const u=DB.users[i]; u.perms=u.perms||{}; u.perms[key]=on; save(); cloudSaveUsers(); }
 function toggleView(i,v,on){ const u=DB.users[i]; u.views=u.views||[]; if(on){if(!u.views.includes(v))u.views.push(v);}else u.views=u.views.filter(x=>x!==v); save(); cloudSaveUsers(); }
 function delUser(i){ if(DB.users[i].username===ME.username){toast("You can't delete yourself");return;} if(!confirm('Delete user?'))return; DB.users.splice(i,1); save(); cloudSaveUsers(); renderAdmin(); }
 function setDeviceMode(m){ DB.security.deviceMode=m; if(m==='global'&&!(DB.devices||[]).some(d=>d.id===deviceId())){DB.devices.push({id:deviceId(),label:'This device',user:'',approvedAt:new Date().toISOString()});} save(); cloudSaveDevices(); renderAdmin(); }
@@ -6307,6 +6324,31 @@ function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.de
 function approvePending(pi){ const p=DB._pending[pi]; const id=p.id||p; const label=(document.getElementById('plabel_'+pi)||{}).value||''; approveDevice(id,label); }
 function denyPending(pi){ const p=DB._pending[pi]; const id=p.id||p; DB._pending.splice(pi,1); save(); cloudSavePending(); renderAdmin(); toast('Device denied: '+id); }
 function cloudSavePending(){ if(!SB)return; SB.from('kv').upsert({key:'_pending',val:JSON.stringify(DB._pending||[])}).then(()=>{}); }
+async function cloudSaveRates(){
+  if(!SB)return;
+  try{
+    const rCopy=JSON.parse(JSON.stringify(DB.rates||{}));
+    if(rCopy.catalogue) rCopy.catalogue=rCopy.catalogue.map(c=>{const e={...c};delete e.gif;delete e.img;return e;});
+    await SB.from('kv').upsert({key:'_rates',val:JSON.stringify(rCopy)});
+  }catch(e){console.warn('cloudSaveRates',e);}
+}
+async function cloudPullRates(){
+  if(!SB)return;
+  try{
+    const {data}=await SB.from('kv').select('val').eq('key','_rates').maybeSingle();
+    if(data&&data.val){ DB.rates=JSON.parse(data.val); save(); }
+  }catch(e){console.warn('cloudPullRates',e);}
+}
+async function cloudSavePerms(){
+  if(!SB)return;
+  try{
+    const map={};
+    (DB.users||[]).forEach(u=>{ map[u.username]=u.perms||{}; });
+    await SB.from('kv').upsert({key:'_perms',val:JSON.stringify(map)});
+  }catch(e){console.warn('cloudSavePerms',e);}
+}
+let _ratesTimer=null;
+function debouncedCloudSaveRates(){ clearTimeout(_ratesTimer); _ratesTimer=setTimeout(()=>cloudSaveRates(),2000); }
 let _pollTimer=null;
 async function pollPending(){
   if(!SB||!ME||ME.role!=='admin')return;
