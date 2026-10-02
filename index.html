@@ -6070,7 +6070,7 @@ async function cloudPullAuth(){ if(!SB)return;
   try{ const {data:us}=await SB.from('psg_users').select('*'); if(us&&us.length) DB.users=us.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||['dashboard'],devices:[]}));
     const {data:ds}=await SB.from('psg_devices').select('*'); if(ds) DB.devices=ds.map(d=>({id:d.id,label:d.label,user:d.app_user,approvedAt:''}));
     const {data:st}=await SB.from('psg_settings').select('*').eq('key','deviceMode').maybeSingle(); if(st&&st.value)DB.security.deviceMode=st.value;
-    /* restore perms */ try{ const {data:pk}=await SB.from('kv').select('val').eq('key','_perms').maybeSingle(); if(pk&&pk.val){ const pm=JSON.parse(pk.val); DB.users.forEach(u=>{ u.perms=pm[u.username]||{editRates:true,editQuotes:false,deleteQuotes:false}; }); } }catch(ep){}
+    /* restore perms */ try{ const {data:pk}=await SB.from('psg_settings').select('value').eq('key','_perms').maybeSingle(); if(pk&&pk.value){ const pm=JSON.parse(pk.value); DB.users.forEach(u=>{ u.perms=pm[u.username]||{editRates:true,editQuotes:false,deleteQuotes:false}; }); } }catch(ep){}
     /* restore rates */ await cloudPullRates();
     save(); }catch(e){console.warn('pull auth',e);} }
 function openCloud(){
@@ -6324,7 +6324,7 @@ function setDeviceMode(m){ DB.security.deviceMode=m; if(m==='global'&&!(DB.devic
 function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.devices.push({id,label:label||'',user:'',approvedAt:new Date().toISOString()}); DB._pending=(DB._pending||[]).filter(p=>(p.id||p)!==id); save(); cloudSaveDevices(); cloudSavePending(); buildNav(); renderAdmin(); toast('✓ Device approved: '+id); }
 function approvePending(pi){ const p=DB._pending[pi]; const id=p.id||p; const label=(document.getElementById('plabel_'+pi)||{}).value||''; approveDevice(id,label); }
 function denyPending(pi){ const p=DB._pending[pi]; const id=p.id||p; DB._pending.splice(pi,1); save(); cloudSavePending(); renderAdmin(); toast('Device denied: '+id); }
-function cloudSavePending(){ if(!SB)return; SB.from('kv').upsert({key:'_pending',val:JSON.stringify(DB._pending||[])}).then(()=>{}); }
+function cloudSavePending(){ if(!SB)return; SB.from('psg_settings').upsert({key:'_pending',value:JSON.stringify(DB._pending||[])}).then(()=>{}); }
 let _ratesCloudTs=0; // tracks the cloud timestamp we last pushed or pulled
 async function cloudSaveRates(){
   if(!SB)return;
@@ -6332,20 +6332,21 @@ async function cloudSaveRates(){
     const rCopy=JSON.parse(JSON.stringify(DB.rates||{}));
     if(rCopy.catalogue) rCopy.catalogue=rCopy.catalogue.map(c=>{const e={...c};delete e.gif;delete e.img;return e;});
     const ts=Date.now();
-    await SB.from('kv').upsert({key:'_rates',val:JSON.stringify({ts,data:rCopy})});
+    await SB.from('psg_settings').upsert({key:'_rates',value:JSON.stringify({ts,data:rCopy})});
     _ratesCloudTs=ts; // remember what WE pushed so we don't re-pull our own change
   }catch(e){console.warn('cloudSaveRates',e);}
 }
 async function cloudPullRates(){
   if(!SB)return;
   try{
-    const {data}=await SB.from('kv').select('val').eq('key','_rates').maybeSingle();
-    if(data&&data.val){
-      const parsed=JSON.parse(data.val);
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_rates').maybeSingle();
+    if(data&&data.value){
+      const parsed=JSON.parse(data.value);
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
       DB.rates=rates; _ratesCloudTs=ts; save();
+      if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
 }
@@ -6354,7 +6355,7 @@ async function cloudSavePerms(){
   try{
     const map={};
     (DB.users||[]).forEach(u=>{ map[u.username]=u.perms||{}; });
-    await SB.from('kv').upsert({key:'_perms',val:JSON.stringify(map)});
+    await SB.from('psg_settings').upsert({key:'_perms',value:JSON.stringify(map)});
   }catch(e){console.warn('cloudSavePerms',e);}
 }
 let _ratesTimer=null;
@@ -6364,27 +6365,35 @@ let _ratesSyncTimer=null;
 async function _checkRatesSync(){
   if(!SB||!ME)return;
   try{
-    const {data}=await SB.from('kv').select('val').eq('key','_rates').maybeSingle();
-    if(data&&data.val){
-      const parsed=JSON.parse(data.val);
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_rates').maybeSingle();
+    if(data&&data.value){
+      const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
         DB.rates=parsed.data||parsed; _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
-        if(document.querySelector('.view.active[id="view-rates"]')||document.querySelector('[data-view="rates"].nav.active')) renderRates();
+        if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
+    } else {
+      // cloud has no rates yet — if we have local rates, push them up now
+      const hasRates=DB.rates&&Object.keys(DB.rates).length>0;
+      if(hasRates) cloudSaveRates();
     }
   }catch(e){}
 }
-function startRatesSync(){ if(_ratesSyncTimer)clearInterval(_ratesSyncTimer); _ratesSyncTimer=setInterval(_checkRatesSync,60000); }
+function startRatesSync(){
+  if(_ratesSyncTimer)clearInterval(_ratesSyncTimer);
+  _checkRatesSync(); // fire immediately on login
+  _ratesSyncTimer=setInterval(_checkRatesSync,60000);
+}
 function stopRatesSync(){ if(_ratesSyncTimer){clearInterval(_ratesSyncTimer);_ratesSyncTimer=null;} }
 let _pollTimer=null;
 async function pollPending(){
   if(!SB||!ME||ME.role!=='admin')return;
   try{
-    const {data}=await SB.from('kv').select('val').eq('key','_pending').single();
-    if(data&&data.val){
-      const remote=JSON.parse(data.val)||[];
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_pending').maybeSingle();
+    if(data&&data.value){
+      const remote=JSON.parse(data.value)||[];
       const before=(DB._pending||[]).length;
       // merge: add any remote pending not already in local
       remote.forEach(p=>{
