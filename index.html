@@ -6061,8 +6061,8 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
       windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
     let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
-    save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
-async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); toast('Pushed '+DB.quotes.length+' quotes + users/devices to cloud'); }
+    await cloudPullRates(); save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes + rates from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
+async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates to cloud'); }
 async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
 async function cloudSaveDevices(){ if(!SB)return; try{ await SB.from('psg_devices').delete().neq('id','__none__'); if((DB.devices||[]).length) await SB.from('psg_devices').insert(DB.devices.map(d=>({id:d.id,label:d.label||'',app_user:d.user||'',device_mode:DB.security.deviceMode})));
     await SB.from('psg_settings').upsert({key:'deviceMode',value:DB.security.deviceMode}); }catch(e){console.warn('devices',e);} }
