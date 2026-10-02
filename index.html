@@ -6119,9 +6119,10 @@ function doLogin(){
   document.getElementById('loginBg').classList.remove('show'); document.body.classList.remove('locked');
   buildNav(); go('dashboard');
   if(ME.role==='admin') startPendingPoll();
+  startRatesSync();
   startInactivityTimer();
 }
-function logout(forced){ ME=null; localStorage.removeItem('psg_session'); stopInactivityTimer(); renderLogin(); if(forced) toast('⏱ Signed out due to inactivity'); }
+function logout(forced){ ME=null; localStorage.removeItem('psg_session'); stopInactivityTimer(); stopRatesSync(); renderLogin(); if(forced) toast('⏱ Signed out due to inactivity'); }
 
 /* ---- Inactivity auto-logout ---- */
 let _inactTimer=null, _inactWarnTimer=null, _lastActivity=Date.now();
@@ -6324,19 +6325,28 @@ function approveDevice(id,label){ if(!(DB.devices||[]).some(d=>d.id===id)) DB.de
 function approvePending(pi){ const p=DB._pending[pi]; const id=p.id||p; const label=(document.getElementById('plabel_'+pi)||{}).value||''; approveDevice(id,label); }
 function denyPending(pi){ const p=DB._pending[pi]; const id=p.id||p; DB._pending.splice(pi,1); save(); cloudSavePending(); renderAdmin(); toast('Device denied: '+id); }
 function cloudSavePending(){ if(!SB)return; SB.from('kv').upsert({key:'_pending',val:JSON.stringify(DB._pending||[])}).then(()=>{}); }
+let _ratesCloudTs=0; // tracks the cloud timestamp we last pushed or pulled
 async function cloudSaveRates(){
   if(!SB)return;
   try{
     const rCopy=JSON.parse(JSON.stringify(DB.rates||{}));
     if(rCopy.catalogue) rCopy.catalogue=rCopy.catalogue.map(c=>{const e={...c};delete e.gif;delete e.img;return e;});
-    await SB.from('kv').upsert({key:'_rates',val:JSON.stringify(rCopy)});
+    const ts=Date.now();
+    await SB.from('kv').upsert({key:'_rates',val:JSON.stringify({ts,data:rCopy})});
+    _ratesCloudTs=ts; // remember what WE pushed so we don't re-pull our own change
   }catch(e){console.warn('cloudSaveRates',e);}
 }
 async function cloudPullRates(){
   if(!SB)return;
   try{
     const {data}=await SB.from('kv').select('val').eq('key','_rates').maybeSingle();
-    if(data&&data.val){ DB.rates=JSON.parse(data.val); save(); }
+    if(data&&data.val){
+      const parsed=JSON.parse(data.val);
+      // support both new format {ts,data} and old format (plain rates object)
+      const rates=parsed.data||parsed;
+      const ts=parsed.ts||0;
+      DB.rates=rates; _ratesCloudTs=ts; save();
+    }
   }catch(e){console.warn('cloudPullRates',e);}
 }
 async function cloudSavePerms(){
@@ -6349,6 +6359,25 @@ async function cloudSavePerms(){
 }
 let _ratesTimer=null;
 function debouncedCloudSaveRates(){ clearTimeout(_ratesTimer); _ratesTimer=setTimeout(()=>cloudSaveRates(),2000); }
+/* === AUTO RATES SYNC === polls every 60s; pulls if another device pushed newer rates */
+let _ratesSyncTimer=null;
+async function _checkRatesSync(){
+  if(!SB||!ME)return;
+  try{
+    const {data}=await SB.from('kv').select('val').eq('key','_rates').maybeSingle();
+    if(data&&data.val){
+      const parsed=JSON.parse(data.val);
+      const ts=parsed.ts||0;
+      if(ts>_ratesCloudTs){ // someone else pushed newer rates
+        DB.rates=parsed.data||parsed; _ratesCloudTs=ts; save();
+        toast('⟳ Rates updated from cloud');
+        if(document.querySelector('.view.active[id="view-rates"]')||document.querySelector('[data-view="rates"].nav.active')) renderRates();
+      }
+    }
+  }catch(e){}
+}
+function startRatesSync(){ if(_ratesSyncTimer)clearInterval(_ratesSyncTimer); _ratesSyncTimer=setInterval(_checkRatesSync,60000); }
+function stopRatesSync(){ if(_ratesSyncTimer){clearInterval(_ratesSyncTimer);_ratesSyncTimer=null;} }
 let _pollTimer=null;
 async function pollPending(){
   if(!SB||!ME||ME.role!=='admin')return;
@@ -6439,7 +6468,7 @@ function autoPullIfEmpty(){ if(SB && (DB.quotes||[]).length===0) cloudPull(); }
   if(SB){ try{ await cloudPullAuth(); }catch(e){} }   // reflect cloud users/permissions/devices
   let sess=null; try{sess=JSON.parse(localStorage.getItem('psg_session'));}catch(e){}
   const u=sess&&findUser(sess.u);
-  if(u && deviceApproved(u)){ ME=u; buildNav(); go('dashboard'); autoPullIfEmpty(); startInactivityTimer(); }
+  if(u && deviceApproved(u)){ ME=u; buildNav(); go('dashboard'); autoPullIfEmpty(); if(ME.role==='admin') startPendingPoll(); startRatesSync(); startInactivityTimer(); }
   else { renderLogin(); }
 })();
 
