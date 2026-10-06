@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2315,6 +2315,10 @@ const SEED = /*__SEED__*/{
     },
     "lockTypes": {
       "casement": [
+        "Simple Lock",
+        "Multi Lock"
+      ],
+      "awning": [
         "Simple Lock",
         "Multi Lock"
       ],
@@ -4810,7 +4814,7 @@ function winRowHTML(w,i){
       <div style="flex:1"><b>${String(i+1).padStart(2,'0')} · ${esc(w.name||w.code||'New window')}</b>
         <div class="muted" style="font-size:12px">${esc(w.category||'')} · ${w.series||'—'} · ${w.finish||''} · ${dimStr(w)} · Qty ${num(w.qty)||1}</div></div>
       <div class="right"><div style="font-weight:800">${money(r.lineTotal)}</div><div class="muted" style="font-size:11px">${money(r.perSqft)}/sqft</div></div>
-      <button class="ghost sm danger no-print" onclick="event.stopPropagation();delWindow('${w.id}')">✕</button></div>
+      ${QRO?'':` <button class="ghost sm danger no-print" onclick="event.stopPropagation();delWindow('${w.id}')">&#x2715;</button>`}</div>
     <div class="wb">${winFormHTML(w,r)}</div></div>`;
 }
 function opt(list,cur){ return list.map(x=>`<option ${String(cur)===String(x)?'selected':''}>${esc(x)}</option>`).join(''); }
