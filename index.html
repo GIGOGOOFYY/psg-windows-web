@@ -4507,17 +4507,54 @@ function calcWindow(w){
   });
   // glass panes + spacer (priced from glass rate table, by type + thickness)
   const hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
-  if(hasGlass){ const gA=glassOf(w);
-    // unitsPerWin from glassOf so it matches combo/fixed/casement panel count
-    const unitsPerWin=gA.units/(num(w.qty)||1);
-    if(dblG){ const perPane=gA.areaSftPer/2;
-      addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassOuterThk||'')+' (outer)',perPane,glassRate(w.glassOuter,w.glassOuterThk),'Sft');
-      addHw('Glass — '+(w.glassInner||'Clear')+' '+(w.glassInnerThk||'')+' (inner)',perPane,glassRate(w.glassInner,w.glassInnerThk),'Sft');
-      const spacerPerWin=dblG?+(2*(gA.paneW+gA.paneH)*unitsPerWin).toFixed(2):0;
+  if(hasGlass){
+    const gA=glassOf(w);
+    const _gd=dimsOf(w),_OH=_gd.OH,_OW=_gd.OW,_SH=_gd.SH,_SW=_gd.SW;
+    const _wt=w.wtype||'casement';
+    const _isCombo=_wt==='casement+fixed'||_wt==='awning+fixed'||_wt==='sliding+fixed';
+    const _isFix=_wt==='fixed';
+    const _nSh=_wt==='sliding'?(Math.max(1,num(w.nShutters)||2)):(Math.max(1,num(w.nShutters)||1));
+    // Helper: emit one or two addHw lines for a glass area (handles single & double glazing)
+    function _addGlassLine(suffix,areaSft){
+      if(!areaSft||areaSft<0.001)return;
+      const _ar=+areaSft.toFixed(2);
+      if(dblG){
+        const _half=+(_ar/2).toFixed(2);
+        addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassOuterThk||'')+' (outer) '+suffix,_half,glassRate(w.glassOuter,w.glassOuterThk),'Sft');
+        addHw('Glass — '+(w.glassInner||'Clear')+' '+(w.glassInnerThk||'')+' (inner) '+suffix,_half,glassRate(w.glassInner,w.glassInnerThk),'Sft');
+      } else {
+        addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassThk||'')+' '+suffix,_ar,glassRate(w.glassOuter,w.glassThk),'Sft');
+      }
+    }
+    if(_isFix){
+      // Pure fixed window — full opening
+      _addGlassLine('(Fixed)',_OH*_OW);
+    } else if(_isCombo){
+      // 1. Shutter glass — SW × SH × nShutters
+      _addGlassLine('(Shutter'+(_nSh>1?' ×'+_nSh:'')+')',_SW*_SH*_nSh);
+      // 2. Transom (top-fixed) glass — when OH > SH
+      const _transH=_OH-_SH;
+      if(_transH>0.002){
+        _addGlassLine('(Transom)',_OW*_transH);
+      }
+      // 3. Side-fixed glass — when OW > nSh × SW
+      const _sideW=_OW-_nSh*_SW;
+      if(_sideW>0.002){
+        const _nFix=Math.max(1,Math.round(_sideW/_SW));
+        _addGlassLine('(Fixed'+(_nFix>1?' ×'+_nFix:'')+')',_sideW*_SH);
+      }
+    } else {
+      // Casement / awning / sliding — shutter panes only
+      _addGlassLine('(Shutter'+(_nSh>1?' ×'+_nSh:'')+')',_SW*_SH*_nSh);
+    }
+    // Spacer for double glazing (perimeter of each pane × total units)
+    if(dblG){
+      const unitsPerWin=gA.units/(num(w.qty)||1);
+      const spacerPerWin=+(2*(gA.paneW+gA.paneH)*unitsPerWin).toFixed(2);
       if(spacerPerWin) addHw('Spacer — '+(w.spacer||''),spacerPerWin,spacerRate(w.spacer),'rft');
-    } else addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassThk||''),gA.areaSftPer,glassRate(w.glassOuter,w.glassThk),'Sft');
+    }
   }
-  const hardware=hw.reduce((s,x)=>s+x.amount,0);
+const hardware=hw.reduce((s,x)=>s+x.amount,0);
 
   const alDiscPct=num(w.alDiscount)||0;
   const alDiscAmt=aluminium*(alDiscPct/100);
