@@ -4805,7 +4805,7 @@ function renderWindows(){
    <div class="card" style="margin-top:16px"><div class="bd row" style="justify-content:space-between;align-items:center">
      <div><span class="muted">Quotation total (${(q.windows||[]).length} line items)</span>
        <div style="font-size:24px;font-weight:800">${money(quoteTotal(q))}</div></div>
-     <button onclick="saveMeta();toast('Saved')">Save quotation</button></div></div>`;
+     ${QRO?'':`<button onclick="saveMeta();toast('Saved')">Save quotation</button>`}</div></div>`;
 }
 function winRowHTML(w,i){
   const r=calcWindow(w), cat=DB.rates.catalogue.find(c=>c.code===w.code);
