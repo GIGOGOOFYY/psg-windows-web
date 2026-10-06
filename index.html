@@ -4098,6 +4098,7 @@ const PERM_DEFS=[
 ];
 function perm(key){ if(!ME) return false; if(ME.role==='admin') return true; const p=ME.perms||{}; return (key in p)?!!p[key]:(PERM_DEFS.find(d=>d.key===key)||{def:false}).def; }
 let QRO=false; // quote read-only flag; set in renderEditor()
+let ERL=false; // edit-rates-limited flag; set in renderRates()
 let DB=load();
 function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}catch(e){}
   if(!s||!s.rates) s={rates:structuredClone(SEED), quotes:[], seq:1};
@@ -5230,6 +5231,7 @@ function syncSeedParts(){
 }
 function renderRates(){
   syncSeedParts();
+  ERL=!perm('editRates');
   const sysNames=Object.keys(DB.rates.systems);
   C().innerHTML=`<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
     <div class="muted">Edit any rate — saves automatically and drives all quotes.</div>
@@ -5283,7 +5285,7 @@ function renderRates(){
      </tbody></table></div></div></div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Handle Accessories</b>
-       <select id="haHandleSel" onchange="renderHandleAccTable()">${Object.keys(DB.rates.handles).map(k=>`<option>${k}</option>`).join('')}</select>
+       <select id="haHandleSel" onchange="renderHandleAccTable();if(ERL)restrictRates()">${Object.keys(DB.rates.handles).map(k=>`<option>${k}</option>`).join('')}</select>
        <button class="sm" onclick="addHandleAcc()">+ Add Row</button>
        <button class="sm ghost" onclick="addHandleAccGroup()">+ New Handle</button>
      </div>
@@ -5310,11 +5312,11 @@ function renderRates(){
        <button class="sm green" onclick="promptAddSystem()">+ New System</button>
        <button class="sm danger" onclick="promptDelSystem()">Delete System</button>
      </div></div><div class="bd">
-     <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
+     <div class="field" style="max-width:280px"><label>System</label><select id="sysSel" onchange="renderSysTable();if(ERL)restrictRates()">${sysNames.map(s=>`<option>${s}${hasRates(s)?'':' (no rates)'}</option>`).join('')}</select></div>
      <div id="sysTable" style="overflow:auto"></div></div></div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Casement &amp; Awning Hardware</b>
-       <select id="casHWSel" onchange="renderCasHWTable()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="casHWSel" onchange="renderCasHWTable();if(ERL)restrictRates()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addCasHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Casement &amp; Awning windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>.</div>
@@ -5322,7 +5324,7 @@ function renderRates(){
    </div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Fixed Window Hardware</b>
-       <select id="fixHWSel" onchange="renderFixedHWTable()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="fixHWSel" onchange="renderFixedHWTable();if(ERL)restrictRates()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addFixedHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Fixed windows (also applied to combo types: Casement+Fixed, Awning+Fixed, Sliding+Fixed). Qty formulas: <code>outer_perim</code>, <code>outer_area</code>.</div>
@@ -5330,7 +5332,7 @@ function renderRates(){
    </div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Sliding Window Hardware</b>
-       <select id="slideHWSel" onchange="renderSlideHWTable()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="slideHWSel" onchange="renderSlideHWTable();if(ERL)restrictRates()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Sliding windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>, <code>net_area</code>.</div>
@@ -5342,7 +5344,29 @@ function renderRates(){
   renderCasHWTable();
   renderFixedHWTable();
   renderSlideHWTable();
+  if(ERL) restrictRates();
 }
+
+function restrictRates(){
+  const v=document.getElementById('view-rates');
+  if(!v||!ERL) return;
+  // Hide all management buttons (add/delete items)
+  v.querySelectorAll('button').forEach(b=>{b.style.display='none';});
+  // Disable row-metadata selects (those without an id — nav selects have ids)
+  v.querySelectorAll('select:not([id])').forEach(el=>{el.disabled=true;});
+  // Disable all text inputs (names, formulas, labels)
+  v.querySelectorAll('input[type="text"],input:not([type])').forEach(el=>{el.disabled=true;});
+  // For number inputs: keep rate fields, disable non-rate fields (qty, cutDed, glassMin/Max)
+  v.querySelectorAll('input[type="number"]').forEach(el=>{
+    const oc=el.getAttribute('onchange')||'';
+    const isRate=oc.includes("'rate'")||oc.includes('.rate=')||
+                 oc.includes('setPartRate')||(oc.includes('toast')&&oc.includes('Saved'));
+    if(!isRate) el.disabled=true;
+  });
+  // Disable checkboxes (width/section management flags)
+  v.querySelectorAll('input[type="checkbox"]').forEach(el=>{el.disabled=true;});
+}
+
 // Section groups: each entry is [groupLabel, [sectionNames]]
 const SEC_GROUPS=[
   ['Outer',       ['Outer Bottom','Outer Top','Outer Height']],
