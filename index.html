@@ -4725,7 +4725,7 @@ function newQuote(){
   // Always derive next number from actual existing quotes so deletions don't leave gaps
   let mx=1; (DB.quotes||[]).forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
   const q={id:uid(),quoteNo:'PSG-Q'+String(DB.seq).padStart(4,'0'),customer:'',ref:'',sales:'',
-  date:new Date().toISOString().slice(0,10),deliver:'',windows:[]}; DB.seq++; DB.quotes.push(q); save(); cloudSaveQuote(q); CURR=q.id; SUB='design'; go('editor'); }
+  date:new Date().toISOString().slice(0,10),deliver:'',windows:[],_isNewUnsaved:true}; DB.seq++; DB.quotes.push(q); save(); cloudSaveQuote(q); CURR=q.id; SUB='design'; go('editor'); }
 function editQuote(id){ CURR=id; SUB='design'; go('editor'); }
 function delQuote(id){ if(!confirm('Delete this quotation?'))return; DB.quotes=DB.quotes.filter(q=>q.id!==id); save(); cloudDeleteQuote(id); renderQuotes(); toast('Deleted'); }
 function curr(){ return DB.quotes.find(q=>q.id===CURR); }
@@ -4733,7 +4733,7 @@ function curr(){ return DB.quotes.find(q=>q.id===CURR); }
 /* ---------- Editor (tabs: Windows / Design Summary / Production) ---------- */
 function renderEditor(){
   const q=curr(); if(!q){go('quotes');return;}
-  QRO=!perm('editQuotes');
+  QRO=!perm('editQuotes')&&!curr()._isNewUnsaved;
   C().innerHTML=`
   <div id="ed-wrap" class="${QRO?'qro':''}">
   ${QRO?`<div style="background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#856404">View Only</span><span class="muted" style="font-size:13px"> — You don't have permission to edit this quotation. Contact an admin to make changes.</span></div>`:''}
@@ -4762,7 +4762,7 @@ function renderEditor(){
 function setSub(s){ SUB=s; document.querySelectorAll('.seg button').forEach(b=>b.classList.remove('on')); renderSub();
   document.querySelectorAll('.seg button')[{design:0,summary:1,prod:2,bom:3}[s]].classList.add('on'); }
 function saveMeta(){ const q=curr();if(!q)return; q.quoteNo=val('q_no');q.customer=val('q_cust');q.date=val('q_date');
-  q.ref=val('q_ref');q.sales=val('q_sales');q.deliver=val('q_deliver'); save(); cloudSaveQuote(q); }
+  q.ref=val('q_ref');q.sales=val('q_sales');q.deliver=val('q_deliver'); if(q._isNewUnsaved){delete q._isNewUnsaved;} save(); cloudSaveQuote(q); if(!perm('editQuotes')){QRO=true;renderEditor();} }
 function renderSub(){ if(SUB==='design')renderWindows(); else if(SUB==='summary')renderDesignSummary(); else if(SUB==='prod')renderProduction(); else renderBOM(); }
 
 /* ---------- Project BOM ---------- */
