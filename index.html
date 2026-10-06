@@ -4508,8 +4508,8 @@ function calcWindow(w){
   // glass panes + spacer (priced from glass rate table, by type + thickness)
   const hasGlass=dblG?(w.glassOuterThk||w.glassInnerThk):w.glassThk;
   if(hasGlass){ const gA=glassOf(w);
-    // use areaSftPer = per single window; breakdown display multiplies by r.qty
-    const unitsPerWin=(w.wtype==='sliding')?(num(w.nShutters)||2):1;
+    // unitsPerWin from glassOf so it matches combo/fixed/casement panel count
+    const unitsPerWin=gA.units/(num(w.qty)||1);
     if(dblG){ const perPane=gA.areaSftPer/2;
       addHw('Glass — '+(w.glassOuter||'Clear')+' '+(w.glassOuterThk||'')+' (outer)',perPane,glassRate(w.glassOuter,w.glassOuterThk),'Sft');
       addHw('Glass — '+(w.glassInner||'Clear')+' '+(w.glassInnerThk||'')+' (inner)',perPane,glassRate(w.glassInner,w.glassInnerThk),'Sft');
@@ -4620,14 +4620,29 @@ function glassLabel(w){
   if(w.glazing==='Double'){ const u=unitThk(w); if(!(w.glassOuterThk||w.glassInnerThk)) return '—';
     return `${u?u+'mm ':''}DGU · ${w.glassOuter||'Clear'} ${w.glassOuterThk||''} + ${w.glassInner||'Clear'} ${w.glassInnerThk||''}`.replace(/\s+/g,' ').trim(); }
   const t=w.glassThk||''; return t?`${t} Tempered ${w.glassOuter||'Clear'}`:'—'; }
-function glassOf(w){ const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,qty=num(w.qty)||1;
-  // units = glazed openings PER SINGLE WINDOW (no qty multiplication here)
-  // qty multiplication is applied by callers (BOM totals, glass schedule) separately
-  const unitsPerWin=((w.wtype==='sliding')?(num(w.nShutters)||2):1);
-  const units=unitsPerWin*qty;   // total glazed openings across all windows (for BOM/schedule)
+function glassOf(w){ const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,OH=_d.OH,OW=_d.OW,qty=num(w.qty)||1;
+  const wtype=w.wtype||'casement';
   const dbl=w.glazing==='Double', panesPer=dbl?2:1;
+  // For combo types (casement+fixed, awning+fixed, etc.) the full opening OH*OW covers
+  // both the operable shutters AND the fixed panels — no separate fixed-glass calculation needed.
+  // For casement/awning the catalogue sets nShutters (shutterQty) correctly.
+  let unitsPerWin, areaSftPerVal;
+  const isCombo=wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed'||wtype==='fixed';
+  if(isCombo){
+    areaSftPerVal=+(OH*OW*panesPer).toFixed(2);
+    unitsPerWin=Math.max(1,Math.round((OH*OW)/(SW*SH)));
+  } else if(wtype==='sliding'){
+    unitsPerWin=num(w.nShutters)||2;
+    areaSftPerVal=+(SW*SH*panesPer*unitsPerWin).toFixed(2);
+  } else {
+    unitsPerWin=Math.max(1,num(w.nShutters)||1);
+    areaSftPerVal=+(SW*SH*panesPer*unitsPerWin).toFixed(2);
+  }
+  const units=unitsPerWin*qty;
+  // keep legacy name so rest of function is unchanged
+  const dbl_=dbl; // already declared above
   // areaSft = per single window (used by calcWindow for pricing — display multiplies by qty)
-  const areaSftPer=+(SW*SH*panesPer*unitsPerWin).toFixed(2);
+  const areaSftPer=areaSftPerVal;
   return {label:glassLabel(w),glazing:w.glazing||'Single',unitThk:dbl?unitThk(w):null,
     outer:w.glassOuter||'Clear',outerThk:dbl?(w.glassOuterThk||''):(w.glassThk||''),
     inner:dbl?(w.glassInner||'Clear'):null,innerThk:dbl?(w.glassInnerThk||''):null,spacer:w.spacer||'',
