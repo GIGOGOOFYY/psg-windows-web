@@ -4125,6 +4125,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
   try{ if(img) localStorage.setItem('psg_cat_img_'+code,img); else localStorage.removeItem('psg_cat_img_'+code); }catch(e){}
+  debouncedCloudSaveCatImages();
 }
 function loadCatImages(code){ return { gif:localStorage.getItem('psg_cat_gif_'+code)||'', img:localStorage.getItem('psg_cat_img_'+code)||'' }; }
 function save(){
@@ -6082,8 +6083,9 @@ async function cloudSaveQuote(q){ if(!SB)return;
   try{ await SB.from('psg_quotes').upsert({id:q.id,quote_no:q.quoteNo,customer:q.customer,ref:q.ref,sales:q.sales,quote_date:q.date,deliver:q.deliver});
     await SB.from('psg_windows').delete().eq('quote_id',q.id);
     if((q.windows||[]).length) await SB.from('psg_windows').insert(q.windows.map((w,i)=>winToDB(w,q.id,i)));
+    const qts=Date.now(); await SB.from('psg_settings').upsert({key:'_quotes_ts',value:String(qts)}); _quotesCloudTs=qts;
     setCloudDot('on'); }catch(e){ setCloudDot('err'); console.warn('cloud save',e); } }
-async function cloudDeleteQuote(id){ if(!SB)return; try{ await SB.from('psg_windows').delete().eq('quote_id',id); await SB.from('psg_quotes').delete().eq('id',id);}catch(e){console.warn(e);} }
+async function cloudDeleteQuote(id){ if(!SB)return; try{ await SB.from('psg_windows').delete().eq('quote_id',id); await SB.from('psg_quotes').delete().eq('id',id); const qts=Date.now(); await SB.from('psg_settings').upsert({key:'_quotes_ts',value:String(qts)}); _quotesCloudTs=qts; }catch(e){console.warn(e);} }
 async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
   try{ const {data:qs,error:e1}=await SB.from('psg_quotes').select('*'); if(e1)throw e1;
     const {data:wsr,error:e2}=await SB.from('psg_windows').select('*'); if(e2)throw e2;
@@ -6091,8 +6093,8 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
       windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
     let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
-    await cloudPullRates(); save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes + rates from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
-async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates to cloud'); }
+    await cloudPullRates(); await cloudPullCatImages(); _quotesCloudTs=Date.now(); save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes + rates + images from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
+async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); await cloudSaveCatImages(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates + images to cloud'); }
 async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
 async function cloudSaveDevices(){ if(!SB)return; try{ await SB.from('psg_devices').delete().neq('id','__none__'); if((DB.devices||[]).length) await SB.from('psg_devices').insert(DB.devices.map(d=>({id:d.id,label:d.label||'',app_user:d.user||'',device_mode:DB.security.deviceMode})));
     await SB.from('psg_settings').upsert({key:'deviceMode',value:DB.security.deviceMode}); }catch(e){console.warn('devices',e);} }
@@ -6356,6 +6358,8 @@ function approvePending(pi){ const p=DB._pending[pi]; const id=p.id||p; const la
 function denyPending(pi){ const p=DB._pending[pi]; const id=p.id||p; DB._pending.splice(pi,1); save(); cloudSavePending(); renderAdmin(); toast('Device denied: '+id); }
 function cloudSavePending(){ if(!SB)return; SB.from('psg_settings').upsert({key:'_pending',value:JSON.stringify(DB._pending||[])}).then(()=>{}); }
 let _ratesCloudTs=0; // tracks the cloud timestamp we last pushed or pulled
+let _quotesCloudTs=0; // quotes cloud timestamp for auto-sync
+let _imagesCloudTs=0; // cat-images cloud timestamp for auto-sync
 async function cloudSaveRates(){
   if(!SB)return;
   try{
@@ -6390,6 +6394,68 @@ async function cloudSavePerms(){
 }
 let _ratesTimer=null;
 function debouncedCloudSaveRates(){ clearTimeout(_ratesTimer); _ratesTimer=setTimeout(()=>cloudSaveRates(),2000); }
+/* === CAT-IMAGE CLOUD SYNC === */
+let _imgSyncTimer=null;
+function debouncedCloudSaveCatImages(){clearTimeout(_imgSyncTimer);_imgSyncTimer=setTimeout(()=>cloudSaveCatImages(),3000);}
+async function cloudSaveCatImages(){
+  if(!SB)return;
+  try{
+    const imgs={};
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&(k.startsWith('psg_cat_img_')||k.startsWith('psg_cat_gif_')))imgs[k]=localStorage.getItem(k);}
+    const ts=Date.now();
+    await SB.from('psg_settings').upsert({key:'_cat_images',value:JSON.stringify({ts,data:imgs})});
+    _imagesCloudTs=ts;
+  }catch(e){console.warn('cloudSaveCatImages',e);}
+}
+async function cloudPullCatImages(){
+  if(!SB)return;
+  try{
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_cat_images').maybeSingle();
+    if(data&&data.value){
+      const parsed=JSON.parse(data.value);
+      const imgs=parsed.data||parsed; const ts=parsed.ts||0;
+      _imagesCloudTs=ts;
+      Object.entries(imgs).forEach(([k,v])=>{try{if(v)localStorage.setItem(k,v);else localStorage.removeItem(k);}catch(e){}});
+    }
+  }catch(e){console.warn('cloudPullCatImages',e);}
+}
+/* === QUOTES AUTO-SYNC === polls every 60s like rates */
+async function _checkQuotesSync(){
+  if(!SB||!ME)return;
+  try{
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_quotes_ts').maybeSingle();
+    if(data&&data.value){
+      const ts=Number(data.value);
+      if(ts>_quotesCloudTs){
+        const {data:qs}=await SB.from('psg_quotes').select('*');
+        const {data:wsr}=await SB.from('psg_windows').select('*');
+        const byq={}; (wsr||[]).forEach(r=>{(byq[r.quote_id]=byq[r.quote_id]||[]).push(r);});
+        DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
+          windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
+        let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
+        _quotesCloudTs=ts; save();
+        toast('⟳ Quotes updated from cloud');
+        if(document.querySelector('#view-quotes.active')) renderQuotes();
+      }
+    }
+  }catch(e){}
+}
+async function _checkImagesSync(){
+  if(!SB||!ME)return;
+  try{
+    const {data}=await SB.from('psg_settings').select('value').eq('key','_cat_images').maybeSingle();
+    if(data&&data.value){
+      const parsed=JSON.parse(data.value); const ts=parsed.ts||0;
+      if(ts>_imagesCloudTs){
+        const imgs=parsed.data||parsed; _imagesCloudTs=ts;
+        Object.entries(imgs).forEach(([k,v])=>{try{if(v)localStorage.setItem(k,v);else localStorage.removeItem(k);}catch(e){}});
+        toast('⟳ Catalogue images updated from cloud');
+        if(document.querySelector('#view-catalogue.active')) renderCatalogue();
+      }
+    }
+  }catch(e){}
+}
+
 /* === AUTO RATES SYNC === polls every 60s; pulls if another device pushed newer rates */
 let _ratesSyncTimer=null;
 async function _checkRatesSync(){
@@ -6414,7 +6480,9 @@ async function _checkRatesSync(){
 function startRatesSync(){
   if(_ratesSyncTimer)clearInterval(_ratesSyncTimer);
   _checkRatesSync(); // fire immediately on login
-  _ratesSyncTimer=setInterval(_checkRatesSync,60000);
+  _checkQuotesSync();
+  _checkImagesSync();
+  _ratesSyncTimer=setInterval(async()=>{await _checkRatesSync();await _checkQuotesSync();await _checkImagesSync();},60000);
 }
 function stopRatesSync(){ if(_ratesSyncTimer){clearInterval(_ratesSyncTimer);_ratesSyncTimer=null;} }
 let _pollTimer=null;
