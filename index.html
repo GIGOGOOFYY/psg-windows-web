@@ -4187,7 +4187,7 @@ function brandsFor(series,lockType,wtype){
       if(!m.brand) return false;
       if(lockType && m.lockType!==lockType) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
-      if(wtype && wt!=='both' && wt!==wtype) return false;
+      if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
       return true;
     })
     .map(([,m])=>m.brand);
@@ -4209,7 +4209,7 @@ function modelsFor(brand,lockType,wtype){
       const m=getHandleMeta(k);
       if(m.brand!==brand||m.lockType!==lockType||!brand) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
-      if(wtype && wt!=='both' && wt!==wtype) return false;
+      if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
       return true;
     })
     .map(([k])=>k);
