@@ -5348,7 +5348,7 @@ function renderRates(){
 }
 
 function restrictRates(){
-  const v=document.getElementById('view-rates');
+  const v=document.getElementById('content');
   if(!v||!ERL) return;
   // Hide all management buttons (add/delete items)
   v.querySelectorAll('button').forEach(b=>{b.style.display='none';});
