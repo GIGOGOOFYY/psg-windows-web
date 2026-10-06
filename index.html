@@ -4183,8 +4183,7 @@ function getHandleMeta(name){
   return seedHandleMeta()[name]||{brand:'',lockType:'',winType:'casement'};
 }
 function brandsFor(series,lockType,wtype){
-  const seedB=IL.handleBrands[(series||'')+'|'+(lockType||'')]||IL.handleBrands[series]||[];
-  // Include brands from user-added DB handles that match lockType and winType
+  // Read exclusively from user-configured handles in Rates — no hardcoded seeds
   const dbB=Object.entries(DB.rates.handleMeta||{})
     .filter(([,m])=>{
       if(!m.brand) return false;
@@ -4194,19 +4193,10 @@ function brandsFor(series,lockType,wtype){
       return true;
     })
     .map(([,m])=>m.brand);
-  // From seed also filter by wtype
-  const seedFiltered = wtype ? seedB.filter(b=>{
-    // check if this brand has any models matching wtype
-    return (IL.handleModels[(b||'')+'|'+(lockType||'')]||[]).some(h=>{
-      const wt=inferWinType(lockType||'');
-      return wt==='both'||wt===wtype;
-    });
-  }) : seedB;
-  return [...new Set([...seedFiltered,...dbB])];
+  return [...new Set(dbB)];
 }
 function modelsFor(brand,lockType,wtype){
-  const seedM=IL.handleModels[(brand||'')+'|'+(lockType||'')]||[];
-  // Include user-added DB handles that match brand+lockType+winType
+  // Read exclusively from user-configured handles in Rates — no hardcoded seeds
   const dbM=Object.entries(DB.rates.handles)
     .filter(([k])=>{
       const m=getHandleMeta(k);
@@ -4216,9 +4206,7 @@ function modelsFor(brand,lockType,wtype){
       return true;
     })
     .map(([k])=>k);
-  // For seed models, filter by wtype (inferred from lockType)
-  const seedFiltered = wtype ? seedM.filter(()=>{ const wt=inferWinType(lockType||''); return wt==='both'||wt===wtype; }) : seedM;
-  return [...new Set([...seedFiltered,...dbM])];
+  return [...new Set(dbM)];
 }
 // Items stored in DB.rates.hinges that are accessories (not real hinge types) — excluded from dropdown
 const HINGE_ACCESSORY_KEYS=['FC-310'];
@@ -5650,7 +5638,7 @@ function delAcc(k){ if(!confirm('Remove "'+k+'" from accessories?'))return; dele
 function renameAcc(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.accessories[oldKey]; delete DB.rates.accessories[oldKey]; DB.rates.accessories[newKey]=v; save(); }
 function setHandleMeta(name,field,val){ if(!DB.rates.handleMeta) DB.rates.handleMeta={}; if(!DB.rates.handleMeta[name]) DB.rates.handleMeta[name]={}; DB.rates.handleMeta[name][field]=val; save(); }
 function addHandle(){ const n='New Handle '+Date.now().toString().slice(-4); DB.rates.handles[n]=0; if(!DB.rates.handleMeta) DB.rates.handleMeta={}; DB.rates.handleMeta[n]={brand:'',lockType:'',winType:'casement'}; save(); renderRates(); }
-function delHandle(k){ if(!confirm('Remove handle "'+k+'"?'))return; delete DB.rates.handles[k]; if(DB.rates.handleMeta) delete DB.rates.handleMeta[k]; save(); renderRates(); }
+function delHandle(k){ if(!confirm('Remove handle "'+k+'"?'))return; delete DB.rates.handles[k]; if(DB.rates.handleMeta) delete DB.rates.handleMeta[k]; save(); debouncedCloudSaveRates(); renderRates(); }
 function renameHandle(oldKey,newKey){ newKey=(newKey||'').trim(); if(!newKey||newKey===oldKey)return; const v=DB.rates.handles[oldKey]; delete DB.rates.handles[oldKey]; DB.rates.handles[newKey]=v; if(DB.rates.handleMeta&&DB.rates.handleMeta[oldKey]){ DB.rates.handleMeta[newKey]=DB.rates.handleMeta[oldKey]; delete DB.rates.handleMeta[oldKey]; } save(); }
 function addHinge(){ const n='New Hinge '+Date.now().toString().slice(-4); DB.rates.hinges[n]=0; if(!DB.rates.hingeMeta) DB.rates.hingeMeta={}; DB.rates.hingeMeta[n]={brand:'',winType:'both',thermal:'Any'}; save(); renderRates(); }
 function delHinge(k){ if(!confirm('Remove hinge "'+k+'"?'))return; delete DB.rates.hinges[k]; save(); renderRates(); }
@@ -6452,6 +6440,11 @@ async function _checkImagesSync(){
         toast('⟳ Catalogue images updated from cloud');
         if(document.querySelector('#view-catalogue.active')) renderCatalogue();
       }
+    } else {
+      // Cloud has no images yet — if this device has local images, push them up
+      let hasLocal=false;
+      for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&(k.startsWith('psg_cat_img_')||k.startsWith('psg_cat_gif_'))){hasLocal=true;break;}}
+      if(hasLocal) await cloudSaveCatImages();
     }
   }catch(e){}
 }
