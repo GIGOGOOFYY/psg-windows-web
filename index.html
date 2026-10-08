@@ -4121,7 +4121,11 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(s.rates&&s.rates.catalogue){
     s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
   }
-  if(s.rates) migrateHandleMeta(s.rates);
+  // NOTE: migrateHandleMeta() is NOT called here — load() runs synchronously at script top-level
+  // (let DB=load();) before SLIDING_LOCKS/seedHandleMeta/inferWinType are initialized (TDZ), which
+  // threw on every page load and broke the whole app. The migration still runs via boot()'s
+  // cloudPullAuth()->cloudPullRates() call (and the other 3 hook points), which execute after the
+  // full script has finished evaluating, so those are safe.
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
