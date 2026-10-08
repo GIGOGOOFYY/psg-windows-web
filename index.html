@@ -4121,6 +4121,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   if(s.rates&&s.rates.catalogue){
     s.rates.catalogue=s.rates.catalogue.map(c=>{ const imgs=loadCatImages(c.code); return {...c, gif:imgs.gif||c.gif||'', img:imgs.img||c.img||''}; });
   }
+  if(s.rates) migrateHandleMeta(s.rates);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4155,7 +4156,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4182,17 +4183,34 @@ function getHandleMeta(name){
   if(db){ if(!db.winType) db.winType=inferWinType(db.lockType||''); return db; }
   return seedHandleMeta()[name]||{brand:'',lockType:'',winType:'casement'};
 }
+// Backfill real handleMeta entries for handles that only ever showed a seed-fallback brand
+// (Rates page displayed it via getHandleMeta()'s fallback, but it was never actually persisted,
+// so brandsFor()/dropdowns never saw it). Also drops handleMeta entries whose handle no longer
+// exists in DB.rates.handles (stale/orphaned brand data left over from renamed/deleted handles).
+function migrateHandleMeta(rates){
+  if(!rates||!rates.handles) return;
+  if(!rates.handleMeta) rates.handleMeta={};
+  const seedMeta=seedHandleMeta();
+  Object.keys(rates.handles).forEach(k=>{
+    if(!rates.handleMeta[k] && seedMeta[k]) rates.handleMeta[k]={...seedMeta[k]};
+  });
+  Object.keys(rates.handleMeta).forEach(k=>{
+    if(!(k in rates.handles)) delete rates.handleMeta[k];
+  });
+}
 function brandsFor(series,lockType,wtype){
-  // Read exclusively from user-configured handles in Rates — no hardcoded seeds
-  const dbB=Object.entries(DB.rates.handleMeta||{})
-    .filter(([,m])=>{
+  // Read exclusively from real handles in Rates (DB.rates.handles) — same source Rates page shows,
+  // so a brand only ever appears here if it belongs to a handle that still exists in the rate table.
+  const dbB=Object.keys(DB.rates.handles||{})
+    .map(k=>getHandleMeta(k))
+    .filter(m=>{
       if(!m.brand) return false;
       if(lockType && m.lockType!==lockType) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
       if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
       return true;
     })
-    .map(([,m])=>m.brand);
+    .map(m=>m.brand);
   return [...new Set(dbB)];
 }
 function modelsFor(brand,lockType,wtype){
@@ -6431,7 +6449,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6523,7 +6541,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
