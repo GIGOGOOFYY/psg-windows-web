@@ -4020,6 +4020,55 @@ const FT_MM=304.8;
 const toMm=ft=>Math.round(num(ft)*304.8);
 function dimStr(w){const d=dimsOf(w);return `${toMm(d.OH)}×${toMm(d.OW)}mm`;}
 
+/* ---------- Dimension unit entry (mm / inch / ft-inch) ----------
+   Internal storage of every window dimension (w.dim[n]) stays decimal FEET,
+   exactly as before — these helpers only convert what the user types/sees. */
+function parseDecFrac(s){ // "9" | "9.5" | "9 1/2" | "3/4" -> decimal number
+  s=String(s).trim(); if(s==='') return null;
+  let m=s.match(/^(-?\d+(?:\.\d+)?)\s+(\d+)\/(\d+)$/);
+  if(m){ const sign=m[1].trim().startsWith('-')?-1:1; return parseFloat(m[1])+sign*(parseFloat(m[2])/parseFloat(m[3])); }
+  m=s.match(/^(-?\d+)\/(\d+)$/); if(m) return parseFloat(m[1])/parseFloat(m[2]);
+  m=s.match(/^-?\d+(?:\.\d+)?$/); if(m) return parseFloat(s);
+  return null;
+}
+function parseFeetInches(s){ // "9'-6\"" | "9-6" | "9' 6 1/2\"" | "9.5" -> decimal feet
+  s=String(s).trim().replace(/[’′]/g,"'").replace(/[”″]/g,'"'); if(s==='') return null;
+  let m=s.match(/^(-?\d+(?:\.\d+)?)\s*'\s*-?\s*(\d+(?:\.\d+)?)?(?:\s+(\d+)\/(\d+))?\s*"?\s*$/);
+  if(m){ let ft=parseFloat(m[1]), inch=m[2]?parseFloat(m[2]):0; if(m[3]&&m[4]) inch+=parseFloat(m[3])/parseFloat(m[4]); return ft+(ft<0?-1:1)*inch/12; }
+  m=s.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)(?:\s+(\d+)\/(\d+))?\s*$/);
+  if(m){ let ft=parseFloat(m[1]), inch=parseFloat(m[2]); if(m[3]&&m[4]) inch+=parseFloat(m[3])/parseFloat(m[4]); return ft+(ft<0?-1:1)*inch/12; }
+  const d=parseDecFrac(s); return d===null?null:d;
+}
+function parseLenToFt(str,unit){ // display string (in given unit) -> decimal feet, '' if blank/invalid
+  if(str==null) return '';
+  const s=String(str).trim(); if(s==='') return '';
+  if(unit==='in'){ const inch=parseDecFrac(s); return inch===null?'':inch/12; }
+  if(unit==='ft'){ const ft=parseFeetInches(s); return ft===null?'':ft; }
+  const mm=parseDecFrac(s); return mm===null?'':mm/FT_MM; // default/mm
+}
+function fmtFracPart(val,denom){ // val: 0..1 fractional remainder -> "" or " n/d"
+  let n=Math.round(val*denom); if(n===0) return {carry:0,str:''}; if(n===denom) return {carry:1,str:''};
+  const g=(a,b)=>b?g(b,a%b):a, dd=g(n,denom);
+  return {carry:0,str:` ${n/dd}/${denom/dd}`};
+}
+function fmtLenFromFt(ft,unit,denom){ // decimal feet -> display string in given unit
+  denom=denom||16;
+  if(ft===''||ft==null||isNaN(ft)) return '';
+  if(unit==='in'){
+    const inches=ft*12, sign=inches<0?-1:1, abs=Math.abs(inches);
+    let whole=Math.floor(abs); const {carry,str}=fmtFracPart(abs-whole,denom); whole+=carry;
+    return `${sign<0?'-':''}${whole}${str}`;
+  }
+  if(unit==='ft'){
+    const totalIn=ft*12, sign=totalIn<0?-1:1, abs=Math.abs(totalIn);
+    let feet=Math.floor(abs/12), remIn=abs-feet*12;
+    let inchWhole=Math.floor(remIn); const {carry,str}=fmtFracPart(remIn-inchWhole,denom); inchWhole+=carry;
+    if(inchWhole>=12){ inchWhole-=12; feet+=1; }
+    return `${sign<0?'-':''}${feet}'-${inchWhole}${str}"`;
+  }
+  return String(Math.round(ft*FT_MM)); // mm
+}
+
 const HANDLE_ACC_DEFAULT={
   "HTB-15":[
     {name:"Rubber Fix ZPG-65 Thin Flat",rate:65,qty:1,unit:"rft"},
@@ -4910,7 +4959,11 @@ function winFormHTML(w,r){
   const thkList=IL.glassThk[w.glazing||'Single']||[], typeList=glassChoices(w.glazing||'Single'), spacerList=spacerChoices();
   const noRate = w.series && !hasRates(w.series);
   const design=getDesign(w), _rg=resolveG(w,w.series);
-  const dividerInfo = design.derived.filter(d=>/divider/i.test(d.label)).map(d=>`<div class="field"><label>${esc(d.label)} <span class="muted" style="text-transform:none">· computed</span></label><input value="${(_rg.g[d.n]||0).toFixed(2)} ft" disabled></div>`).join('');
+  const dimUnit=w.dimUnit||'mm';
+  const dimUnitLabel=dimUnit==='in'?'in':(dimUnit==='ft'?'ft-in':'mm');
+  const dimInputAttrs=dimUnit==='mm'?'type="number" step="1"':'type="text"';
+  const dimPlaceholder=dimUnit==='ft'?`e.g. 9'-6&quot; or 9-6`:(dimUnit==='in'?'e.g. 37 1/2':'');
+  const dividerInfo = design.derived.filter(d=>/divider/i.test(d.label)).map(d=>`<div class="field"><label>${esc(d.label)} <span class="muted" style="text-transform:none">· computed</span></label><input value="${fmtLenFromFt(_rg.g[d.n]||0,dimUnit)}" disabled></div>`).join('');
   return `
    <div class="f4" style="margin-top:14px">
      <div class="field"><label>Window name / location</label><input data-k="name" value="${esc(w.name||'')}" ${bind} placeholder="e.g. Master Bedroom"></div>
@@ -4925,12 +4978,21 @@ function winFormHTML(w,r){
      <div class="field"><label>Quantity</label><input data-k="qty" type="number" step="1" value="${w.qty??1}" ${bind}></div>
      ${isSlide?`<div class="field"><label># Shutters</label><input data-k="nShutters" type="number" step="1" value="${w.nShutters??2}" ${bind}></div>`:'<div></div>'}
    </div>
+   <div class="f4" style="margin-top:-4px">
+     <div class="field"><label>Dimension units</label><select data-k="dimUnit" ${bind}>
+       <option value="mm" ${dimUnit==='mm'?'selected':''}>mm</option>
+       <option value="in" ${dimUnit==='in'?'selected':''}>Inches</option>
+       <option value="ft" ${dimUnit==='ft'?'selected':''}>Feet-Inches</option>
+     </select></div>
+     <div class="muted" style="grid-column:span 3;align-self:center;font-size:11.5px">${dimUnit==='ft'?`Enter as feet-inches, e.g. <b>9'-6"</b> or <b>9-6</b> (also accepts decimal feet like 9.5)`:dimUnit==='in'?`Enter inches, decimal or fraction e.g. <b>37 1/2</b>`:'Enter millimetres'}</div>
+   </div>
    <div class="f4">
      ${design.inputs.map(i=>{
        // For sliding windows, auto-compute SH(g6) and SW(g7) — hide manual entry
-       if(isSlide && i.n===6){ const ohMm=Math.round(num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)*304.8)||0; return `<div class="field"><label>Shutter Height (mm) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${ohMm}" disabled></div>`; }
-       if(isSlide && i.n===7){ const owMm=Math.round(num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)*304.8)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (mm) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${Math.round(owMm/nsh)}" disabled></div>`; }
-       const valFt=(w.dim||{})[i.n]??i.def; const valMm=valFt===''?'':(Math.round(num(valFt)*304.8)||''); return `<div class="field"><label>${esc(i.label)} (mm)</label><input data-k="dim_${i.n}" type="number" step="1" value="${valMm}" ${bind} data-mm="1"></div>`;
+       if(isSlide && i.n===6){ const ohFt=num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)||0; return `<div class="field"><label>Shutter Height (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${fmtLenFromFt(ohFt,dimUnit)}" disabled></div>`; }
+       if(isSlide && i.n===7){ const owFt=num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${fmtLenFromFt(owFt/nsh,dimUnit)}" disabled></div>`; }
+       const valFt=(w.dim||{})[i.n]??i.def; const dispVal=valFt===''?'':fmtLenFromFt(num(valFt),dimUnit);
+       return `<div class="field"><label>${esc(i.label)} (${dimUnitLabel})</label><input data-k="dim_${i.n}" ${dimInputAttrs} value="${dispVal}" ${bind} placeholder="${dimPlaceholder}"></div>`;
      }).join('')}
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
@@ -5028,7 +5090,7 @@ function addWindow(code){
 function delWindow(id){ const q=curr(); q.windows=q.windows.filter(w=>w.id!==id); save(); cloudSaveQuote(q); renderWindows(); }
 function upd(id,el){
   const q=curr(), w=q.windows.find(x=>x.id===id), k=el.dataset.k;
-  if(k.startsWith('dim_')){ const n=+k.slice(4); w.dim=w.dim||{}; w.dim[n]=el.value===''?'':num(el.value)/304.8; }
+  if(k.startsWith('dim_')){ const n=+k.slice(4); w.dim=w.dim||{}; w.dim[n]=parseLenToFt(el.value,w.dimUnit||'mm'); }
   else w[k]= el.type==='number'?(el.value===''?'':num(el.value)):el.value;
   // cascade resets
   if(k==='category'){ w.wtype=typeFor(w.value=el.value); if(w.wtype==='sliding')w.thermal='NO';
@@ -5041,7 +5103,7 @@ function upd(id,el){
   if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType,w.wtype).includes(w.handle)) w.handle=''; }
   if(k==='glazing'){ w.glassThk=''; w.glassOuter='Clear'; w.glassInner='Clear'; w.glassOuterThk=''; w.glassInnerThk=''; if(!w.spacer)w.spacer=(DB.rates.spacers[0]||{}).size||''; w.picks={}; }
   save(); cloudSaveQuote(q);
-  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk'].includes(k);
+  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk','dimUnit'].includes(k);
   const r=calcWindow(w), wr=document.getElementById('wr_'+id);
   const hdr=wr.querySelector('.wh .right'); if(hdr) hdr.innerHTML=`<div style="font-weight:800">${money(r.lineTotal)}</div><div class="muted" style="font-size:11px">${money(r.perSqft)}/sqft</div>`;
   const sub=wr.querySelector('.wh .muted'); if(sub) sub.textContent=`${w.category||''} · ${w.series||'—'} · ${w.finish||''} · ${dimStr(w)} · Qty ${num(w.qty)||1}`;
