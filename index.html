@@ -4585,6 +4585,12 @@ function calcWindow(w){
       addHw('Hinges ('+w.hinge+')',hq2,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
     }
     // Net material is now configured in the HW tables with netType filter — no hardcoded line
+    // Dedicated net handle (w.netHandleMode: '' = none, 'shutter' = reuses the shutter handle above at no extra cost, 'dedicated' = its own priced handle)
+    if(w.netting && w.netHandleMode==='dedicated' && w.netHandle){
+      const nhr=num(DB.rates.handles[w.netHandle]||0);
+      const nhq=(w.netHandleQty===0||w.netHandleQty==='0')?0:(num(w.netHandleQty)||1);
+      addHw('Net Handle: '+[w.netHandleBrand,w.netHandle].filter(Boolean).join(', '),nhq,nhr,'pc',w.netHandle);
+    }
     // ---- sliding-specific hardware from Rates ----
     const slideHW=((DB.rates.slidingHardware||{})[series]||(SEED.slidingHardware||{})[series]||[]).filter(it=>it.name!=='Latch Lock');
     slideHW.forEach(item=>{
@@ -4998,6 +5004,8 @@ function winFormHTML(w,r){
   const bind=`oninput="upd('${w.id}',this)" onchange="upd('${w.id}',this)"`;
   const seriesList=seriesFor(wtype,w.thermal||'NO');
   const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series,w.thermal||'NO',wtype);
+  // Dedicated net handle reuses the same handle catalogue, with no lock-type filter (a net handle isn't a lock)
+  const netBrands=brandsFor(w.series,'',wtype), netModels=modelsFor(w.netHandleBrand,'',wtype);
   const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
   const isFixed=wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed',
         isSlide=wtype==='sliding'||wtype==='sliding+fixed',
@@ -5058,8 +5066,19 @@ function winFormHTML(w,r){
    <div class="f4">
      ${isHinged?`<div class="field"><label>Hinge</label><select data-k="hinge" ${bind}>${optBlank(hinges,w.hinge)}</select></div>`:'<div></div>'}
      <div class="field"><label>Netting</label><select data-k="netting" ${bind}>${optBlank(IL.netting,w.netting)}</select></div>
-     <div></div><div></div>
-   </div>`}
+     ${w.netting?`<div class="field"><label>Net handle</label><select data-k="netHandleMode" ${bind}>
+         <option value="" ${!w.netHandleMode?'selected':''}>— none</option>
+         <option value="shutter" ${w.netHandleMode==='shutter'?'selected':''}>Same as shutter handle</option>
+         <option value="dedicated" ${w.netHandleMode==='dedicated'?'selected':''}>Dedicated handle</option>
+       </select></div>`:'<div></div>'}
+     <div></div>
+   </div>
+   ${(w.netting && w.netHandleMode==='dedicated')?`<div class="f4" style="margin-top:-4px">
+     <div class="field"><label>Net handle brand</label><select data-k="netHandleBrand" ${bind}>${optBlank(netBrands,w.netHandleBrand)}</select></div>
+     <div class="field"><label>Net handle model</label><select data-k="netHandle" ${bind}>${optBlank(netModels,w.netHandle)}</select></div>
+     <div class="field"><label>Net handle qty</label><input data-k="netHandleQty" type="number" step="1" value="${w.netHandleQty??1}" ${bind}></div>
+     <div></div>
+   </div>`:''}`}
    <div class="f4" style="border-top:1px solid var(--line);padding-top:12px">
      <div class="field" style="grid-column:1/-1">
        <label>Section Heights — mm, comma-separated top→bottom <span class="muted" style="text-transform:none">(optional · for Design Summary dimension lines e.g. 772,650,773)</span></label>
@@ -5131,7 +5150,7 @@ function addWindow(code){
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
-    hinge:'',netting:'',glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
+    hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:1,glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
 }
 function delWindow(id){ const q=curr(); q.windows=q.windows.filter(w=>w.id!==id); save(); cloudSaveQuote(q); renderWindows(); }
@@ -5154,13 +5173,16 @@ function upd(id,el){
     const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.lockType=(lockTypesFor(w.wtype)||[])[0]||''; w.handleBrand='';w.handle='';w.hinge='';
     if(!hingesFor(w.series,w.thermal||'NO',w.wtype).includes(w.hinge))w.hinge=''; }
   if(k==='thermal'){ const sl=seriesFor(w.wtype,w.thermal); if(!sl.includes(w.series)) w.series=sl[0]||''; w.handleBrand='';w.handle=''; w.hinge=''; }
-  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series,w.thermal||'NO',w.wtype).includes(w.hinge))w.hinge=''; }
+  if(k==='series'){ w.width=widthsFor(w.series)[0]||''; w.picks={}; if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} if(!hingesFor(w.series,w.thermal||'NO',w.wtype).includes(w.hinge))w.hinge=''; if(!brandsFor(w.series,'',w.wtype).includes(w.netHandleBrand)){w.netHandleBrand='';w.netHandle='';} }
+  if(k==='netHandleBrand'){ if(!modelsFor(w.netHandleBrand,'',w.wtype).includes(w.netHandle)) w.netHandle=''; }
+  if(k==='netting' && !w.netting){ w.netHandleMode=''; w.netHandleBrand=''; w.netHandle=''; }
+  if(k==='netHandleMode' && w.netHandleMode!=='dedicated'){ w.netHandleBrand=''; w.netHandle=''; }
   if(k==='width'){ w.picks={}; }
   if(k==='lockType'){ if(!brandsFor(w.series,w.lockType,w.wtype).includes(w.handleBrand)){w.handleBrand='';w.handle='';} }
   if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType,w.wtype).includes(w.handle)) w.handle=''; }
   if(k==='glazing'){ w.glassThk=''; w.glassOuter='Clear'; w.glassInner='Clear'; w.glassOuterThk=''; w.glassInnerThk=''; if(!w.spacer)w.spacer=(DB.rates.spacers[0]||{}).size||''; w.picks={}; }
   save(); cloudSaveQuote(q);
-  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk','dimUnit'].includes(k);
+  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk','dimUnit','netting','netHandleMode','netHandleBrand'].includes(k);
   const r=calcWindow(w), wr=document.getElementById('wr_'+id);
   const hdr=wr.querySelector('.wh .right'); if(hdr) hdr.innerHTML=`<div style="font-weight:800">${money(r.lineTotal)}</div><div class="muted" style="font-size:11px">${money(r.perSqft)}/sqft</div>`;
   const sub=wr.querySelector('.wh .muted'); if(sub) sub.textContent=`${w.category||''} · ${w.series||'—'} · ${w.finish||''} · ${dimStr(w)} · Qty ${num(w.qty)||1}`;
