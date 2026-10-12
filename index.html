@@ -4318,7 +4318,8 @@ function modelsFor(brand,lockType,wtype){
   const dbM=Object.entries(DB.rates.handles)
     .filter(([k])=>{
       const m=getHandleMeta(k);
-      if(m.brand!==brand||m.lockType!==lockType||!brand) return false;
+      if(m.brand!==brand||!brand) return false;
+      if(lockType && m.lockType!==lockType) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
       if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
       return true;
@@ -4575,9 +4576,9 @@ function calcWindow(w){
   if(wtype!=='fixed'){
     const hr=w.handle?num(DB.rates.handles[w.handle]||0):0;
     const hq=(w.handleQty===0||w.handleQty==='0')?0:(num(w.handleQty)||1);
+    const handleAccs=w.handle?((DB.rates.handleAccessories||{})[w.handle]||[]):[];
     if(w.handle){ const hLabel=[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', '); addHw(hLabel,hq,hr,'pc',w.handle);
-      const accs=(DB.rates.handleAccessories||{})[w.handle]||[];
-      accs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*hq, a.rate||0, a.unit||'pc'); }); }
+      handleAccs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*hq, a.rate||0, a.unit||'pc'); }); }
     if(wtype!=='sliding' && num(w.brush)>0) addHw('Brush',num(w.brush),accRate('Brush'),'rft');
     if(w.hinge==='J3'||w.hinge==='J4') addHw('Peg Stay (FC-310)',1,num((DB.rates.hinges||{})['FC-310']||accRate('FC-310')),'pc');
     if((wtype==='casement'||wtype==='awning') && w.hinge){
@@ -4585,11 +4586,19 @@ function calcWindow(w){
       addHw('Hinges ('+w.hinge+')',hq2,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
     }
     // Net material is now configured in the HW tables with netType filter — no hardcoded line
-    // Dedicated net handle (w.netHandleMode: '' = none, 'shutter' = reuses the shutter handle above at no extra cost, 'dedicated' = its own priced handle)
+    // Net handle (w.netHandleMode: '' = none, 'shutter' = duplicates the shutter's own handle + accessories at shutter-count qty, 'dedicated' = its own separately priced handle)
+    const netShQty=Math.max(1,num(w.nShutters)||2);
+    if(w.netting && w.netHandleMode==='shutter' && w.handle){
+      const nhLabel='Net Handle (Shutter): '+[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', ');
+      addHw(nhLabel,netShQty,hr,'pc',w.handle);
+      handleAccs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw('Net '+a.name, (a.qty||1)*netShQty, a.rate||0, a.unit||'pc'); });
+    }
     if(w.netting && w.netHandleMode==='dedicated' && w.netHandle){
       const nhr=num(DB.rates.handles[w.netHandle]||0);
-      const nhq=(w.netHandleQty===0||w.netHandleQty==='0')?0:(num(w.netHandleQty)||1);
+      const nhq=(w.netHandleQty===0||w.netHandleQty==='0')?0:(num(w.netHandleQty)||netShQty);
       addHw('Net Handle: '+[w.netHandleBrand,w.netHandle].filter(Boolean).join(', '),nhq,nhr,'pc',w.netHandle);
+      const nhAccs=(DB.rates.handleAccessories||{})[w.netHandle]||[];
+      nhAccs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw('Net '+a.name,(a.qty||1)*nhq,a.rate||0,a.unit||'pc'); });
     }
     // ---- sliding-specific hardware from Rates ----
     const slideHW=((DB.rates.slidingHardware||{})[series]||(SEED.slidingHardware||{})[series]||[]).filter(it=>it.name!=='Latch Lock');
@@ -5006,6 +5015,7 @@ function winFormHTML(w,r){
   const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series,w.thermal||'NO',wtype);
   // Dedicated net handle reuses the same handle catalogue, with no lock-type filter (a net handle isn't a lock)
   const netBrands=brandsFor(w.series,'',wtype), netModels=modelsFor(w.netHandleBrand,'',wtype);
+  const netShQtyUi=Math.max(1,num(w.nShutters)||2);
   const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
   const isFixed=wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed',
         isSlide=wtype==='sliding'||wtype==='sliding+fixed',
@@ -5068,15 +5078,18 @@ function winFormHTML(w,r){
      <div class="field"><label>Netting</label><select data-k="netting" ${bind}>${optBlank(IL.netting,w.netting)}</select></div>
      ${w.netting?`<div class="field"><label>Net handle</label><select data-k="netHandleMode" ${bind}>
          <option value="" ${!w.netHandleMode?'selected':''}>— none</option>
-         <option value="shutter" ${w.netHandleMode==='shutter'?'selected':''}>Same as shutter handle</option>
-         <option value="dedicated" ${w.netHandleMode==='dedicated'?'selected':''}>Dedicated handle</option>
+         <option value="shutter" ${w.netHandleMode==='shutter'?'selected':''}>Shutter Handle</option>
+         <option value="dedicated" ${w.netHandleMode==='dedicated'?'selected':''}>Net Handle</option>
        </select></div>`:'<div></div>'}
      <div></div>
    </div>
+   ${(w.netting && w.netHandleMode==='shutter')?`<div class="f4" style="margin-top:-4px">
+     <div class="muted" style="grid-column:span 4;font-size:11.5px">Adds ${netShQtyUi} more of the shutter's own handle (${[w.handleBrand,w.handle].filter(Boolean).join(', ')||'— pick a shutter handle above'}) plus its accessories, one set per shutter (${netShQtyUi} shutters on this window).</div>
+   </div>`:''}
    ${(w.netting && w.netHandleMode==='dedicated')?`<div class="f4" style="margin-top:-4px">
      <div class="field"><label>Net handle brand</label><select data-k="netHandleBrand" ${bind}>${optBlank(netBrands,w.netHandleBrand)}</select></div>
      <div class="field"><label>Net handle model</label><select data-k="netHandle" ${bind}>${optBlank(netModels,w.netHandle)}</select></div>
-     <div class="field"><label>Net handle qty</label><input data-k="netHandleQty" type="number" step="1" value="${w.netHandleQty??1}" ${bind}></div>
+     <div class="field"><label>Net handle qty</label><input data-k="netHandleQty" type="number" step="1" value="${w.netHandleQty??netShQtyUi}" ${bind}></div>
      <div></div>
    </div>`:''}`}
    <div class="f4" style="border-top:1px solid var(--line);padding-top:12px">
@@ -5150,7 +5163,7 @@ function addWindow(code){
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
-    hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:1,glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
+    hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
 }
 function delWindow(id){ const q=curr(); q.windows=q.windows.filter(w=>w.id!==id); save(); cloudSaveQuote(q); renderWindows(); }
@@ -5182,7 +5195,7 @@ function upd(id,el){
   if(k==='lockType'||k==='handleBrand'){ if(!modelsFor(w.handleBrand,w.lockType,w.wtype).includes(w.handle)) w.handle=''; }
   if(k==='glazing'){ w.glassThk=''; w.glassOuter='Clear'; w.glassInner='Clear'; w.glassOuterThk=''; w.glassInnerThk=''; if(!w.spacer)w.spacer=(DB.rates.spacers[0]||{}).size||''; w.picks={}; }
   save(); cloudSaveQuote(q);
-  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk','dimUnit','netting','netHandleMode','netHandleBrand'].includes(k);
+  const structural=['category','thermal','series','lockType','handleBrand','wtype','glazing','spacer','glassOuterThk','glassInnerThk','dimUnit','netting','netHandleMode','netHandleBrand','nShutters'].includes(k);
   const r=calcWindow(w), wr=document.getElementById('wr_'+id);
   const hdr=wr.querySelector('.wh .right'); if(hdr) hdr.innerHTML=`<div style="font-weight:800">${money(r.lineTotal)}</div><div class="muted" style="font-size:11px">${money(r.perSqft)}/sqft</div>`;
   const sub=wr.querySelector('.wh .muted'); if(sub) sub.textContent=`${w.category||''} · ${w.series||'—'} · ${w.finish||''} · ${dimStr(w)} · Qty ${num(w.qty)||1}`;
