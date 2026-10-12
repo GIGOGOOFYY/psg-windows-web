@@ -4046,10 +4046,53 @@ function parseLenToFt(str,unit){ // display string (in given unit) -> decimal fe
   if(unit==='ft'){ const ft=parseFeetInches(s); return ft===null?'':ft; }
   const mm=parseDecFrac(s); return mm===null?'':mm/FT_MM; // default/mm
 }
-function fmtFracPart(val,denom){ // val: 0..1 fractional remainder -> "" or " n/d"
-  let n=Math.round(val*denom); if(n===0) return {carry:0,str:''}; if(n===denom) return {carry:1,str:''};
+function fracParts(val,denom){ // val: 0..1 fractional remainder -> {carry,num,den} reduced
+  let n=Math.round(val*denom); if(n===0) return {carry:0,num:0,den:denom}; if(n===denom) return {carry:1,num:0,den:denom};
   const g=(a,b)=>b?g(b,a%b):a, dd=g(n,denom);
-  return {carry:0,str:` ${n/dd}/${denom/dd}`};
+  return {carry:0,num:n/dd,den:denom/dd};
+}
+function fmtFracPart(val,denom){ // val: 0..1 fractional remainder -> "" or " n/d"
+  const {carry,num,den}=fracParts(val,denom);
+  return {carry,str:num?` ${num}/${den}`:''};
+}
+function lenParts(ft,unit,denom){ // decimal feet -> {ft,whole,num,den} for the 3/4-box entry UI
+  denom=denom||16;
+  const val=Math.max(0,(ft===''||ft==null||isNaN(ft))?0:Number(ft));
+  if(unit==='in'){
+    const inches=val*12; let whole=Math.floor(inches); const fp=fracParts(inches-whole,denom); whole+=fp.carry;
+    return {ft:0,whole,num:fp.num,den:fp.den};
+  }
+  const totalIn=val*12; let feet=Math.floor(totalIn/12), remIn=totalIn-feet*12;
+  let whole=Math.floor(remIn); const fp=fracParts(remIn-whole,denom); whole+=fp.carry;
+  if(whole>=12){ whole-=12; feet+=1; }
+  return {ft:feet,whole,num:fp.num,den:fp.den};
+}
+function dimFieldHTML(n,label,ftVal,unit,bind){ // one editable dimension field, box layout depends on unit
+  if(unit==='mm'){
+    const dispVal=ftVal===''?'':Math.round(num(ftVal)*FT_MM);
+    return `<div class="field"><label>${esc(label)} (mm)</label><input data-k="dim_${n}" type="number" step="1" value="${dispVal}" ${bind}></div>`;
+  }
+  const p=lenParts(ftVal===''?'':num(ftVal),unit);
+  const boxStyle='width:48px;text-align:center';
+  if(unit==='in'){
+    return `<div class="field"><label>${esc(label)} (in)</label>
+      <div class="dimgrp" data-unit="in" style="display:flex;gap:4px;align-items:center">
+        <input class="dimpart" data-k="dim_${n}_whole" data-part="whole" type="number" step="1" min="0" value="${p.whole}" ${bind} style="${boxStyle}" title="Whole inches">
+        <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="width:40px;text-align:center" placeholder="0" title="Numerator">
+        <span class="muted">/</span>
+        <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="width:40px;text-align:center" title="Denominator">
+        <span class="muted">in</span>
+      </div></div>`;
+  }
+  return `<div class="field"><label>${esc(label)} (ft-in)</label>
+    <div class="dimgrp" data-unit="ft" style="display:flex;gap:4px;align-items:center">
+      <input class="dimpart" data-k="dim_${n}_ft" data-part="ft" type="number" step="1" min="0" value="${p.ft}" ${bind} style="${boxStyle}" title="Feet"><span class="muted">'</span>
+      <input class="dimpart" data-k="dim_${n}_whole" data-part="whole" type="number" step="1" min="0" max="11" value="${p.whole}" ${bind} style="${boxStyle}" title="Inches">
+      <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="width:40px;text-align:center" placeholder="0" title="Numerator">
+      <span class="muted">/</span>
+      <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="width:40px;text-align:center" title="Denominator">
+      <span class="muted">"</span>
+    </div></div>`;
 }
 function fmtLenFromFt(ft,unit,denom){ // decimal feet -> display string in given unit
   denom=denom||16;
@@ -4961,8 +5004,6 @@ function winFormHTML(w,r){
   const design=getDesign(w), _rg=resolveG(w,w.series);
   const dimUnit=w.dimUnit||'mm';
   const dimUnitLabel=dimUnit==='in'?'in':(dimUnit==='ft'?'ft-in':'mm');
-  const dimInputAttrs=dimUnit==='mm'?'type="number" step="1"':'type="text"';
-  const dimPlaceholder=dimUnit==='ft'?`e.g. 9'-6&quot; or 9-6`:(dimUnit==='in'?'e.g. 37 1/2':'');
   const dividerInfo = design.derived.filter(d=>/divider/i.test(d.label)).map(d=>`<div class="field"><label>${esc(d.label)} <span class="muted" style="text-transform:none">· computed</span></label><input value="${fmtLenFromFt(_rg.g[d.n]||0,dimUnit)}" disabled></div>`).join('');
   return `
    <div class="f4" style="margin-top:14px">
@@ -4984,15 +5025,15 @@ function winFormHTML(w,r){
        <option value="in" ${dimUnit==='in'?'selected':''}>Inches</option>
        <option value="ft" ${dimUnit==='ft'?'selected':''}>Feet-Inches</option>
      </select></div>
-     <div class="muted" style="grid-column:span 3;align-self:center;font-size:11.5px">${dimUnit==='ft'?`Enter as feet-inches, e.g. <b>9'-6"</b> or <b>9-6</b> (also accepts decimal feet like 9.5)`:dimUnit==='in'?`Enter inches, decimal or fraction e.g. <b>37 1/2</b>`:'Enter millimetres'}</div>
+     <div class="muted" style="grid-column:span 3;align-self:center;font-size:11.5px">${dimUnit==='ft'?`Separate boxes for feet, inches and a fraction — e.g. 9' 6 1/2"`:dimUnit==='in'?`Separate boxes for whole inches and a fraction — e.g. 37 1/2"`:'Enter millimetres'}</div>
    </div>
    <div class="f4">
      ${design.inputs.map(i=>{
        // For sliding windows, auto-compute SH(g6) and SW(g7) — hide manual entry
        if(isSlide && i.n===6){ const ohFt=num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)||0; return `<div class="field"><label>Shutter Height (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${fmtLenFromFt(ohFt,dimUnit)}" disabled></div>`; }
        if(isSlide && i.n===7){ const owFt=num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${fmtLenFromFt(owFt/nsh,dimUnit)}" disabled></div>`; }
-       const valFt=(w.dim||{})[i.n]??i.def; const dispVal=valFt===''?'':fmtLenFromFt(num(valFt),dimUnit);
-       return `<div class="field"><label>${esc(i.label)} (${dimUnitLabel})</label><input data-k="dim_${i.n}" ${dimInputAttrs} value="${dispVal}" ${bind} placeholder="${dimPlaceholder}"></div>`;
+       const valFt=(w.dim||{})[i.n]??i.def;
+       return dimFieldHTML(i.n,i.label,valFt,dimUnit,bind);
      }).join('')}
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
@@ -5090,7 +5131,17 @@ function addWindow(code){
 function delWindow(id){ const q=curr(); q.windows=q.windows.filter(w=>w.id!==id); save(); cloudSaveQuote(q); renderWindows(); }
 function upd(id,el){
   const q=curr(), w=q.windows.find(x=>x.id===id), k=el.dataset.k;
-  if(k.startsWith('dim_')){ const n=+k.slice(4); w.dim=w.dim||{}; w.dim[n]=parseLenToFt(el.value,w.dimUnit||'mm'); }
+  if(k.startsWith('dim_')){
+    const parts=k.slice(4).split('_'), n=+parts[0]; w.dim=w.dim||{};
+    if(parts.length===1){ w.dim[n]=parseLenToFt(el.value,w.dimUnit||'mm'); }
+    else{
+      // split feet/inch/fraction box group — recombine all sibling boxes into one decimal-feet value
+      const grp=el.closest('.dimgrp'), unit=grp?grp.dataset.unit:(w.dimUnit||'mm');
+      const gv=p=>{ const e=grp&&grp.querySelector(`[data-part="${p}"]`); return e?num(e.value):0; };
+      const den=gv('den')||16, inches=gv('whole')+(gv('num')/den);
+      w.dim[n]= unit==='ft' ? (gv('ft')+inches/12) : inches/12;
+    }
+  }
   else w[k]= el.type==='number'?(el.value===''?'':num(el.value)):el.value;
   // cascade resets
   if(k==='category'){ w.wtype=typeFor(w.value=el.value); if(w.wtype==='sliding')w.thermal='NO';
