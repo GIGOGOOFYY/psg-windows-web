@@ -133,6 +133,9 @@
   .login-box{background:var(--panel);color:var(--text);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:100%;max-width:380px;padding:28px}
   .login-box .logo{border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
   body.locked .app{filter:blur(3px);pointer-events:none}
+  .dimgrp{gap:8px!important}
+  .dimgrp .dimpart{-moz-appearance:textfield}
+  .dimgrp .dimpart::-webkit-outer-spin-button,.dimgrp .dimpart::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 </style>
 <style id="psg-custom-theme"></style>
 </head>
@@ -4073,24 +4076,25 @@ function dimFieldHTML(n,label,ftVal,unit,bind){ // one editable dimension field,
     return `<div class="field"><label>${esc(label)} (mm)</label><input data-k="dim_${n}" type="number" step="1" value="${dispVal}" ${bind}></div>`;
   }
   const p=lenParts(ftVal===''?'':num(ftVal),unit);
-  const boxStyle='width:48px;text-align:center';
+  const boxStyle='width:60px;text-align:center';
+  const fracStyle='width:48px;text-align:center';
   if(unit==='in'){
     return `<div class="field"><label>${esc(label)} (in)</label>
-      <div class="dimgrp" data-unit="in" style="display:flex;gap:4px;align-items:center">
+      <div class="dimgrp" data-unit="in" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input class="dimpart" data-k="dim_${n}_whole" data-part="whole" type="number" step="1" min="0" value="${p.whole}" ${bind} style="${boxStyle}" title="Whole inches">
-        <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="width:40px;text-align:center" placeholder="0" title="Numerator">
+        <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="${fracStyle}" placeholder="0" title="Numerator">
         <span class="muted">/</span>
-        <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="width:40px;text-align:center" title="Denominator">
+        <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="${fracStyle}" title="Denominator">
         <span class="muted">in</span>
       </div></div>`;
   }
   return `<div class="field"><label>${esc(label)} (ft-in)</label>
-    <div class="dimgrp" data-unit="ft" style="display:flex;gap:4px;align-items:center">
+    <div class="dimgrp" data-unit="ft" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <input class="dimpart" data-k="dim_${n}_ft" data-part="ft" type="number" step="1" min="0" value="${p.ft}" ${bind} style="${boxStyle}" title="Feet"><span class="muted">'</span>
       <input class="dimpart" data-k="dim_${n}_whole" data-part="whole" type="number" step="1" min="0" max="11" value="${p.whole}" ${bind} style="${boxStyle}" title="Inches">
-      <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="width:40px;text-align:center" placeholder="0" title="Numerator">
+      <input class="dimpart" data-k="dim_${n}_num" data-part="num" type="number" step="1" min="0" value="${p.num||''}" ${bind} style="${fracStyle}" placeholder="0" title="Numerator">
       <span class="muted">/</span>
-      <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="width:40px;text-align:center" title="Denominator">
+      <input class="dimpart" data-k="dim_${n}_den" data-part="den" type="number" step="1" min="1" value="${p.den}" ${bind} style="${fracStyle}" title="Denominator">
       <span class="muted">"</span>
     </div></div>`;
 }
@@ -4997,7 +5001,9 @@ function winFormHTML(w,r){
   const widths=widthsFor(w.series), locks=lockTypesFor(wtype);
   const isFixed=wtype==='fixed'||wtype==='casement+fixed'||wtype==='awning+fixed'||wtype==='sliding+fixed',
         isSlide=wtype==='sliding'||wtype==='sliding+fixed',
-        isCase=wtype==='casement'||wtype==='casement+fixed';
+        isCase=wtype==='casement'||wtype==='casement+fixed',
+        isAwn=wtype==='awning'||wtype==='awning+fixed',
+        isHinged=isCase||isAwn; // pricing (calcWindow) applies hinge cost to both casement AND awning — the dropdown must cover both or awning hinges silently price at Rs 0
   const isDouble=(w.glazing==='Double');
   const thkList=IL.glassThk[w.glazing||'Single']||[], typeList=glassChoices(w.glazing||'Single'), spacerList=spacerChoices();
   const noRate = w.series && !hasRates(w.series);
@@ -5050,7 +5056,7 @@ function winFormHTML(w,r){
      <div class="field"><label>Handle qty</label><input data-k="handleQty" type="number" step="1" value="${w.handleQty??1}" ${bind}></div>
    </div>
    <div class="f4">
-     ${isCase?`<div class="field"><label>Hinge</label><select data-k="hinge" ${bind}>${optBlank(hinges,w.hinge)}</select></div>`:'<div></div>'}
+     ${isHinged?`<div class="field"><label>Hinge</label><select data-k="hinge" ${bind}>${optBlank(hinges,w.hinge)}</select></div>`:'<div></div>'}
      <div class="field"><label>Netting</label><select data-k="netting" ${bind}>${optBlank(IL.netting,w.netting)}</select></div>
      <div></div><div></div>
    </div>`}
