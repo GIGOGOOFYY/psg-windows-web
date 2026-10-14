@@ -58,12 +58,12 @@
   .row{display:flex;gap:14px;flex-wrap:wrap}.grid{display:grid;gap:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
   .card .hd{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
-  .card .bd{padding:16px}
+  .card .bd{padding:16px;overflow-x:auto;-webkit-overflow-scrolling:touch}
   .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
   .stat .k{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
   .stat .v{font-size:26px;font-weight:800;margin-top:6px;letter-spacing:-.5px}
   table{width:100%;border-collapse:collapse}
-  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);font-size:13px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);font-size:13px;white-space:nowrap}
   th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
   tbody tr:hover{background:var(--panel2)} .right{text-align:right}.center{text-align:center}
   .chip{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--chip);font-size:11.5px;font-weight:700;color:var(--muted)}
@@ -103,8 +103,21 @@
   .seg button{background:transparent;color:var(--muted);border-radius:0;padding:8px 14px;font-size:13px}
   .seg button.on{background:var(--accent);color:#fff}
   @media(max-width:820px){.side{position:fixed;left:-240px;z-index:50;transition:left .2s}.side.open{left:0}
-    .f2,.f3,.f4{grid-template-columns:1fr}.menu-btn{display:inline-flex!important}}
-  .menu-btn{display:none}
+    .f2,.f3,.f4{grid-template-columns:1fr}.menu-btn{display:inline-flex!important}
+    .content{padding:12px}
+    .topbar{padding:10px 14px}.topbar h2{font-size:15.5px}.topbar .sub{font-size:11.5px}
+    .card .hd{padding:11px 12px;gap:8px}.card .hd h3{font-size:14.5px}
+    .card .bd{padding:12px}
+    .modal{max-width:100%;border-radius:12px}
+    .modal .hd{padding:12px 14px}.modal .bd{padding:14px}.modal .ft{padding:12px 14px;flex-wrap:wrap}
+    th,td{padding:8px 9px;font-size:12.5px}
+    .stat{padding:12px}.stat .v{font-size:21px}
+    button{padding:9px 12px;font-size:13.5px}
+    .catgrid{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px}
+    .cattile .ph{height:92px}
+    .row{gap:10px}.grid{gap:10px}
+    .winrow .wh{padding:10px 12px;gap:9px}.winrow .wh img{width:36px;height:36px}
+  }
   @media print{
     @page{ size:A4 portrait; margin:8mm 12mm; }
     html,body{ background:#fff !important; }
