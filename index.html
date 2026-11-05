@@ -4668,7 +4668,10 @@ function calcWindow(w){
     ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s,_trackCnt)) addSec(s+' Section',s,OW); });
     if(hasSection(series,'Outer Height',_trackCnt)) addSec('Outer Height Section','Outer Height',2*OH);
     ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s,_trackCnt)) addSec(s+' Section',s,SW*nSh); });
-    if(hasSection(series,'Shutter Height',_trackCnt)) addSec('Shutter Height Section','Shutter Height',SH*nSh);
+    // Each shutter has 2 vertical height members (left + right side), same as Outer Height already
+    // correctly doubles the outer frame's height (2*OH) — this was missing that ×2, undercounting by
+    // half. (Opening Height × 2) × shutter qty: 2-track = OH×4, 3-track = OH×6.
+    if(hasSection(series,'Shutter Height',_trackCnt)) addSec('Shutter Height Section','Shutter Height',SH*2*nSh);
     const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948';
     const ilMult=_ilDouble?2:1;
@@ -4933,7 +4936,9 @@ function prodGroups(w){
     // Shutter cuts
     if(hasSection(series,'Shutter Bottom',_trackCnt)) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:_cutW(SW,'Shutter Bottom'),cnt:nSh*qty}]);
     if(hasSection(series,'Shutter Top',_trackCnt))    g('Shutter Top',   partOf('Shutter Top'),   [{len:_cutW(SW,'Shutter Top'),   cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Height',_trackCnt)) g('Shutter Height',partOf('Shutter Height'),[{len:_cutH(SH,'Shutter Height'),cnt:nSh*qty}]);
+    // 2 height members per shutter (left + right side) — piece length stays SH, count doubles, matching
+    // the same fix in calcWindow() so the cut list matches what the BOM actually priced.
+    if(hasSection(series,'Shutter Height',_trackCnt)) g('Shutter Height',partOf('Shutter Height'),[{len:_cutH(SH,'Shutter Height'),cnt:2*nSh*qty}]);
     // Bidding cuts
     if(hasSection(series,'Bidding Bottom',_trackCnt)) g('Bidding Bottom',partOf('Bidding Bottom'),[{len:_cutW(OW,'Bidding Bottom'),cnt:1*qty}]);
     if(hasSection(series,'Bidding Top',_trackCnt))    g('Bidding Top',   partOf('Bidding Top'),   [{len:_cutW(OW,'Bidding Top'),   cnt:1*qty}]);
