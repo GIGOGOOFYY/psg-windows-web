@@ -4235,6 +4235,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   // threw on every page load and broke the whole app. The migration still runs via boot()'s
   // cloudPullAuth()->cloudPullRates() call (and the other 3 hook points), which execute after the
   // full script has finished evaluating, so those are safe.
+  migrateModernaWidth(s.rates);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4269,7 +4270,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4329,6 +4330,18 @@ function migrateHandleMeta(rates){
   });
   Object.keys(rates.handleMeta).forEach(k=>{
     if(!(k in rates.handles)) delete rates.handleMeta[k];
+  });
+}
+// One-time cleanup: 101mm was retired for MODERNA (the live Rates width is 100mm) but any saved
+// Rates data cloned/edited before that still has the old "101mm" box ticked alongside "100mm" on
+// some parts, left over from before the width was corrected on each part. MODERNA should only ever
+// offer 100mm/127mm/114mm, never 101mm (that value is still valid for other series, e.g. ECONOMY,
+// which this never touches). Strips any lingering "101mm" entry from every MODERNA part's widths.
+function migrateModernaWidth(rates){
+  if(!rates||!rates.systems||!rates.systems.MODERNA) return;
+  rates.systems.MODERNA.forEach(p=>{
+    if(Array.isArray(p.widths) && p.widths.includes('101mm')) p.widths=p.widths.filter(w=>w!=='101mm');
+    if(p.width==='101mm') p.width='100mm';
   });
 }
 function brandsFor(series,lockType,wtype){
@@ -6741,7 +6754,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; migrateHandleMeta(DB.rates); _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6833,7 +6846,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
