@@ -4237,6 +4237,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   // full script has finished evaluating, so those are safe.
   migrateModernaWidth(s.rates);
   migrateSlidingWheelsQty(s.rates);
+  migrateDgSlidingTrack(s.rates);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4271,7 +4272,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4360,6 +4361,20 @@ function migrateSlidingWheelsQty(rates){
     list.forEach(item=>{
       if(item && item.name==='Sliding Wheels' && typeof item.qty==='number') item.qty='shutter_count*2';
     });
+  });
+}
+// One-time tagging: DG_SLIDING's Outer parts DG-26 (2-track) and DG-26P (3-track) share the same
+// series/section/width (100mm, Outer Bottom/Top/Height), so the quotation's part picker offered both
+// as interchangeable options regardless of the window's actual shutter count — letting a 2-track-only
+// part (DG-26) get picked for a 3-shutter window and vice versa. Tags each with its real track/shutter
+// count via the new `track` field (see trackMatches/the Track column in Rates), so partsFor/pickPart
+// only offer the one that actually fits. Only sets it if not already tagged, so a value the user sets
+// themselves in Rates afterward is never overwritten by this running again on a later load.
+function migrateDgSlidingTrack(rates){
+  if(!rates||!rates.systems||!rates.systems.DG_SLIDING) return;
+  rates.systems.DG_SLIDING.forEach(p=>{
+    if(p.part==='DG-26' && p.track==null) p.track=2;
+    if(p.part==='DG-26P' && p.track==null) p.track=3;
   });
 }
 function brandsFor(series,lockType,wtype){
@@ -4558,16 +4573,27 @@ function sectionMatches(secs,section){
   const grp=SEC_GROUPS.find(g=>g[0]===section);
   return grp?grp[1].some(m=>secs.includes(m)):false;
 }
-function hasSection(series,sec){ return sysParts(series).some(p=>sectionMatches(partSections(p),sec)); }
+// trackMatches: a part with no `track` set (the default for every existing part) applies to any
+// shutter/track count, unchanged from before this existed. A part with `track` set (e.g. DG-26P
+// tagged track:3) only applies when the window's own shutter count matches it exactly — e.g. a
+// 2-track part like DG-26 (tagged track:2) should never be offered/picked for a 3-shutter window,
+// and vice versa, even though both may share the same series/section/width. shutterCount is omitted
+// (undefined) by every caller that isn't pricing an actual sliding window (Rates preview, other
+// window types), so the filter is a no-op there and nothing changes for them.
+function trackMatches(p,shutterCount){ return !p.track || shutterCount==null || num(p.track)===shutterCount; }
+function hasSection(series,sec,shutterCount){ return sysParts(series).some(p=>sectionMatches(partSections(p),sec)&&trackMatches(p,shutterCount)); }
 function getGlaze(series,part,section,width){
   // glaze tags live in SEED (source of truth), not in user's DB copy
   const sp=(SEED.systems[rateSeries(series)]||[]).find(p=>p.part===part&&p.section===section&&p.width===width);
   return sp?sp.glaze||null:null;
 }
-function partsFor(series,section,widthPref,glazing,glassThkMm){
+function partsFor(series,section,widthPref,glazing,glassThkMm,shutterCount){
   let parts=sysParts(series).filter(p=>sectionMatches(partSections(p),section));
   if(!parts.length) return [];
   if(widthPref){ const m=parts.filter(p=>{const ws=partWidths(p);return ws.length===0||ws.includes(String(widthPref));}); if(m.length) parts=m; }
+  // Track/shutter-count filter — only narrow when it leaves at least one part, same defensive style
+  // as the width filter above, so an unconfigured series never ends up with zero options.
+  if(shutterCount!=null){ const m=parts.filter(p=>trackMatches(p,shutterCount)); if(m.length) parts=m; }
   const hasTags=parts.some(p=>getGlaze(series,p.part,section,p.width));
   if(hasTags && glazing){
     const tag=glazing==='Double'?'dg':'sg';
@@ -4586,8 +4612,8 @@ function partsFor(series,section,widthPref,glazing,glassThkMm){
   }
   return parts;
 }
-function pickPart(series,section,widthPref,pickedName,glazing,glassThkMm){
-  const parts=partsFor(series,section,widthPref,glazing,glassThkMm);
+function pickPart(series,section,widthPref,pickedName,glazing,glassThkMm,shutterCount){
+  const parts=partsFor(series,section,widthPref,glazing,glassThkMm,shutterCount);
   if(!parts.length) return null;
   // For Bidding with thickness filtering active: auto-select the matched part
   if(section.startsWith('Bidding') && glassThkMm>0 && parts.length===1) return parts[0];
@@ -4624,27 +4650,31 @@ function calcWindow(w){
   const dblG=glazing==='Double';
   // Glass thickness in mm — used to auto-select the correct bidding profile
   const glassThkMm=dblG?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
+  // Track filter: only sliding windows have track-specific parts (e.g. DG-26 = 2-track, DG-26P =
+  // 3-track, same series/section/width but only one is physically correct for a given shutter count).
+  // Non-sliding types pass null so trackMatches() never filters anything for them.
+  const _trackCnt=wtype==='sliding'?(num(w.nShutters)||2):null;
   const addSec=(label,section,length,widthPref)=>{
-    if(!hasSection(series,section)||length<=0) return;
+    if(!hasSection(series,section,_trackCnt)||length<=0) return;
     const wp=widthPref||w.width;
-    const options=partsFor(series,section,wp,glazing,glassThkMm).map(p=>p.part);
-    const part=pickPart(series,section,wp,picks[section],glazing,glassThkMm), rate=partRate(part,finish);
+    const options=partsFor(series,section,wp,glazing,glassThkMm,_trackCnt).map(p=>p.part);
+    const part=pickPart(series,section,wp,picks[section],glazing,glassThkMm,_trackCnt), rate=partRate(part,finish);
     sec.push({label,section,options,part:part?part.part:'—',width:part?part.width:'',length:+length.toFixed(2),unit:'rft',rate,amount:length*rate});
   };
 
   if(wtype==='sliding'){
     const nSh=num(w.nShutters)||2;
     // Outer Section not used for sliding windows
-    ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,OW); });
-    if(hasSection(series,'Outer Height')) addSec('Outer Height Section','Outer Height',2*OH);
-    ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s)) addSec(s+' Section',s,SW*nSh); });
-    if(hasSection(series,'Shutter Height')) addSec('Shutter Height Section','Shutter Height',SH*nSh);
+    ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s,_trackCnt)) addSec(s+' Section',s,OW); });
+    if(hasSection(series,'Outer Height',_trackCnt)) addSec('Outer Height Section','Outer Height',2*OH);
+    ['Shutter Bottom','Shutter Top'].forEach(s=>{ if(hasSection(series,s,_trackCnt)) addSec(s+' Section',s,SW*nSh); });
+    if(hasSection(series,'Shutter Height',_trackCnt)) addSec('Shutter Height Section','Shutter Height',SH*nSh);
     const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948';
     const ilMult=_ilDouble?2:1;
-    if(hasSection(series,'Interlock')) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
+    if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
-    if(w.netting && hasSection(series,'Net')) addSec('Netting Section','Net',2*OH+nSh*SW);
+    if(w.netting && hasSection(series,'Net',_trackCnt)) addSec('Netting Section','Net',2*OH+nSh*SW);
   } else {
     // per-design formulas from the workbook design sheet
     const ds=designSections(w,series); dsSec=ds;
@@ -4883,7 +4913,11 @@ function prodGroups(w){
   /* pickFor: returns the actual part row selected for a section (carries .cutDed from DB row) */
   const _glaz=w.glazing||'Single', _dblG=_glaz==='Double';
   const _gThkMm=_dblG?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
-  const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],_glaz,_gThkMm);
+  // Track filter (see trackMatches): only sliding windows have track-specific parts (DG-26=2-track vs
+  // DG-26P=3-track sharing the same series/section/width), so the cut list picks the same part the
+  // live BOM priced, instead of possibly defaulting to whichever track-tagged part happens to be first.
+  const _trackCnt=(w.wtype||'casement')==='sliding'?(num(w.nShutters)||2):null;
+  const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],_glaz,_gThkMm,_trackCnt);
   const partOf=(sec)=>{ const p=pickFor(sec); return p?p.part+(p.width?(' '+p.width):''):''; };
   if((w.wtype||'casement')==='sliding'){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
@@ -4893,28 +4927,28 @@ function prodGroups(w){
     const _cutH=(dimFt,sec)=>rup(dimFt*FT_MM)+_dedH(sec);
     const _cutW=(dimFt,sec)=>rup(dimFt*FT_MM)+_dedW(sec);
     // Outer frame cuts
-    if(hasSection(series,'Outer Bottom')) g('Outer Bottom',partOf('Outer Bottom'),[{len:_cutW(OW,'Outer Bottom'),cnt:1*qty}]);
-    if(hasSection(series,'Outer Top'))    g('Outer Top',   partOf('Outer Top'),   [{len:_cutW(OW,'Outer Top'),   cnt:1*qty}]);
-    if(hasSection(series,'Outer Height')) g('Outer Height',partOf('Outer Height'),[{len:_cutH(OH,'Outer Height'),cnt:2*qty}]);
+    if(hasSection(series,'Outer Bottom',_trackCnt)) g('Outer Bottom',partOf('Outer Bottom'),[{len:_cutW(OW,'Outer Bottom'),cnt:1*qty}]);
+    if(hasSection(series,'Outer Top',_trackCnt))    g('Outer Top',   partOf('Outer Top'),   [{len:_cutW(OW,'Outer Top'),   cnt:1*qty}]);
+    if(hasSection(series,'Outer Height',_trackCnt)) g('Outer Height',partOf('Outer Height'),[{len:_cutH(OH,'Outer Height'),cnt:2*qty}]);
     // Shutter cuts
-    if(hasSection(series,'Shutter Bottom')) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:_cutW(SW,'Shutter Bottom'),cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Top'))    g('Shutter Top',   partOf('Shutter Top'),   [{len:_cutW(SW,'Shutter Top'),   cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Height')) g('Shutter Height',partOf('Shutter Height'),[{len:_cutH(SH,'Shutter Height'),cnt:nSh*qty}]);
+    if(hasSection(series,'Shutter Bottom',_trackCnt)) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:_cutW(SW,'Shutter Bottom'),cnt:nSh*qty}]);
+    if(hasSection(series,'Shutter Top',_trackCnt))    g('Shutter Top',   partOf('Shutter Top'),   [{len:_cutW(SW,'Shutter Top'),   cnt:nSh*qty}]);
+    if(hasSection(series,'Shutter Height',_trackCnt)) g('Shutter Height',partOf('Shutter Height'),[{len:_cutH(SH,'Shutter Height'),cnt:nSh*qty}]);
     // Bidding cuts
-    if(hasSection(series,'Bidding Bottom')) g('Bidding Bottom',partOf('Bidding Bottom'),[{len:_cutW(OW,'Bidding Bottom'),cnt:1*qty}]);
-    if(hasSection(series,'Bidding Top'))    g('Bidding Top',   partOf('Bidding Top'),   [{len:_cutW(OW,'Bidding Top'),   cnt:1*qty}]);
-    if(hasSection(series,'Bidding Height')) g('Bidding Height',partOf('Bidding Height'),[{len:_cutH(OH,'Bidding Height'),cnt:2*qty}]);
+    if(hasSection(series,'Bidding Bottom',_trackCnt)) g('Bidding Bottom',partOf('Bidding Bottom'),[{len:_cutW(OW,'Bidding Bottom'),cnt:1*qty}]);
+    if(hasSection(series,'Bidding Top',_trackCnt))    g('Bidding Top',   partOf('Bidding Top'),   [{len:_cutW(OW,'Bidding Top'),   cnt:1*qty}]);
+    if(hasSection(series,'Bidding Height',_trackCnt)) g('Bidding Height',partOf('Bidding Height'),[{len:_cutH(OH,'Bidding Height'),cnt:2*qty}]);
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
     const _ilMult=_ilDbl?2:1;
-    if(hasSection(series,'Interlock')) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
+    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
     // Net cuts
     if(w.netting){
-      if(hasSection(series,'Net Top'))    g('Net Top',   partOf('Net Top'),   [{len:_cutW(SW,'Net Top'),   cnt:nSh*qty}]);
-      if(hasSection(series,'Net Bottom')) g('Net Bottom',partOf('Net Bottom'),[{len:_cutW(SW,'Net Bottom'),cnt:nSh*qty}]);
-      if(hasSection(series,'Net Height')) g('Net Height',partOf('Net Height'),[{len:_cutH(OH,'Net Height'),cnt:2*qty}]);
+      if(hasSection(series,'Net Top',_trackCnt))    g('Net Top',   partOf('Net Top'),   [{len:_cutW(SW,'Net Top'),   cnt:nSh*qty}]);
+      if(hasSection(series,'Net Bottom',_trackCnt)) g('Net Bottom',partOf('Net Bottom'),[{len:_cutW(SW,'Net Bottom'),cnt:nSh*qty}]);
+      if(hasSection(series,'Net Height',_trackCnt)) g('Net Height',partOf('Net Height'),[{len:_cutH(OH,'Net Height'),cnt:2*qty}]);
       // fallback: old 'Net' section
-      if(!hasSection(series,'Net Top')&&!hasSection(series,'Net Bottom')&&hasSection(series,'Net'))
+      if(!hasSection(series,'Net Top',_trackCnt)&&!hasSection(series,'Net Bottom',_trackCnt)&&hasSection(series,'Net',_trackCnt))
         g('Netting',partOf('Net'),[{len:_cutH(OH,'Net'),cnt:2*qty},{len:_cutW(SW,'Net'),cnt:nSh*qty}]);
     }
   } else {
@@ -5820,6 +5854,7 @@ function renderSysTable(){
       <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${sysWidths.map(w=>w.replace('mm','')).join(' / ')}</span></th>
       <th style="min-width:62px;text-align:right" title="Height member cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Height</span></th>
       <th style="min-width:62px;text-align:right" title="Width member (bottom/top) cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Width</span></th>
+      <th style="min-width:58px;text-align:center" title="Track/shutter count this part is restricted to (e.g. DG-26=2, DG-26P=3) — only matters for Sliding series. A part with no track set applies to any shutter count, same as before this existed.">Track<br><span style="font-weight:400;font-size:10px">(sliding)</span></th>
       <th style="min-width:340px">Sections Used</th>
       ${fins.map(f=>`<th class="right" style="min-width:72px">${f}</th>`).join('')}
       <th style="width:36px"></th>
@@ -5830,6 +5865,7 @@ function renderSysTable(){
         <div style="display:flex;gap:6px;justify-content:center">${widthCks(p,i)}</div></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedH??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedH',+this.value)"></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedW??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedW',+this.value)"></td>
+      <td class="right"><input type="number" min="1" style="width:50px;text-align:right" placeholder="All" title="Blank = applies to any shutter count" value="${p.track??''}" onchange="setSysPartField('${jsq(sys)}',${i},'track',this.value?+this.value:null)"></td>
       <td style="min-width:340px">${secCks(p,i)}</td>
       ${fins.map(f=>`<td class="right"><input style="width:72px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
       <td><button class="ghost sm danger" onclick="delSysPart('${jsq(sys)}',${i})">✕</button></td>
@@ -5853,7 +5889,7 @@ function toggleSysWidth(sys,i,w,checked){
 }
 function setSysPartField(sys,i,field,v){
   const p=DB.rates.systems[sys][i];
-  if(field==='cutDedH'||field==='cutDedW'||field==='glassMin'||field==='glassMax'){
+  if(field==='cutDedH'||field==='cutDedW'||field==='glassMin'||field==='glassMax'||field==='track'){
     if(v===null||v===''||v===undefined) delete p[field]; else p[field]=+v;
   } else p[field]=(typeof v==='string'?v.trim():v);
   save(); toast('Saved');
@@ -6800,7 +6836,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6892,7 +6928,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
