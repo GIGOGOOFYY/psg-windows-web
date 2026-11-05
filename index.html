@@ -4675,7 +4675,14 @@ function calcWindow(w){
     const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948';
     const ilMult=_ilDouble?2:1;
-    if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',ilMult*SH*nSh);
+    // Interlock exists only at the joint BETWEEN adjacent shutters, not once per shutter — a 2-shutter
+    // (2-track) window has exactly 1 joint, a 3-shutter (3-track) window has 2. Was counted per shutter
+    // (nSh), which overcounted every sliding window by one interlock length. ilMult (the "double
+    // interlock profiles" catalogue flag, e.g. PSG-BGE-73948) is left applied on top, unchanged, since
+    // its own original intent is no longer documented — it now doubles the corrected per-joint amount
+    // instead of the previously-wrong per-shutter amount.
+    const ilJoints=Math.max(0,nSh-1);
+    if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',ilMult*SH*ilJoints);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net',_trackCnt)) addSec('Netting Section','Net',2*OH+nSh*SW);
   } else {
@@ -4946,7 +4953,8 @@ function prodGroups(w){
     const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
     const _ilMult=_ilDbl?2:1;
-    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*nSh*qty}]);
+    // Same joint-count fix as calcWindow(): nSh-1 joints, not nSh.
+    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*Math.max(0,nSh-1)*qty}]);
     // Net cuts
     if(w.netting){
       if(hasSection(series,'Net Top',_trackCnt))    g('Net Top',   partOf('Net Top'),   [{len:_cutW(SW,'Net Top'),   cnt:nSh*qty}]);
