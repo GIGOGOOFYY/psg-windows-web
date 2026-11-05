@@ -4393,7 +4393,21 @@ function lockTypesFor(wtype){
     .map(m=>m.lockType))];
   return [...new Set([...seed,...db])];
 }
-function widthsFor(series){ return SEED.widths[rateSeries(series)]||[]; }
+function widthsFor(series){
+  const rs=rateSeries(series);
+  const seedW=SEED.widths[rs];
+  if(seedW) return seedW;
+  // Custom system (Rates > Aluminium Profiles by System > + New System): SEED.widths has no entry for
+  // it, so derive the width options directly from whatever widths its own parts are actually set up
+  // with, rather than leaving the Profile Width dropdown empty and the window permanently "incomplete".
+  const set=new Set();
+  sysParts(series).forEach(p=>partWidths(p).forEach(w=>set.add(w)));
+  if(!set.size) return [];
+  // order like the Rates table's width columns, then any odd widths outside that fixed list
+  const ordered=SYS_WIDTHS.filter(w=>set.has(w));
+  const extra=[...set].filter(w=>!SYS_WIDTHS.includes(w));
+  return [...ordered,...extra];
+}
 function hasRates(series){
   // Dynamic: does this series have at least one part with a non-zero rate?
   const parts=sysParts(series);
