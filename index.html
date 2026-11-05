@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Windows — Pakistan Safety Glass</title>
+<title>Windows Quotation Software — Pakistan Safety Glass</title>
 <style>
   :root{
     --bg:#c0decc; --panel:#ffffff; --panel2:#e8f5ee; --line:#9ecdb5; --text:#0d2418; --muted:#3d7a5e;
@@ -4273,11 +4273,31 @@ function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rate
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
+// Every series name baked into the static seed lists (IL.thermal), across all window types/thermal —
+// used to tell a built-in series apart from a system the user added via Rates > + New System.
+const SEED_SERIES_SET=new Set(Object.values(IL.thermal).flatMap(t=>[...(t.NO||[]),...(t.YES||[])]));
+// Custom (non-seed) systems have no wtype/thermal of their own in DB.rates.systems (it's just a flat
+// part list), so each one needs a {thermal, wtypes} tag to know which Series dropdowns it belongs in.
+// promptAddSystem() asks for this when a system is created; for one that predates that (or was made
+// before this fix), default it the first time it's seen to NO-thermal / Casement+Fixed+Awning — the
+// common case — rather than leaving it permanently invisible in every Series dropdown.
+function customSystemMeta(name){
+  DB.rates.systemMeta=DB.rates.systemMeta||{};
+  if(!DB.rates.systemMeta[name]) DB.rates.systemMeta[name]={thermal:'NO',wtypes:['casement','fixed','awning']};
+  return DB.rates.systemMeta[name];
+}
 function seriesFor(wtype,thermal){
   // combo types use their primary type's series list
   const base=wtype==='casement+fixed'?'casement':wtype==='awning+fixed'?'awning':wtype==='sliding+fixed'?'sliding':wtype;
   const t=IL.thermal[base]||IL.thermal.casement;
   let list=(t[thermal]||[]).slice();
+  // include user-added systems (Rates > Aluminium Profiles by System > + New System) scoped to this
+  // window type + thermal setting, so a newly created system shows up here without editing code.
+  Object.keys(DB.rates.systems||{}).forEach(name=>{
+    if(SEED_SERIES_SET.has(name)||list.includes(name)) return;
+    const meta=customSystemMeta(name);
+    if(meta.thermal===thermal && meta.wtypes.includes(base)) list.push(name);
+  });
   return list;
 }
 // Derive brand+lockType for each SEED handle from handleModels
@@ -5722,7 +5742,11 @@ function promptAddSystem(){
   if(!name||!name.trim()) return;
   const key=name.trim().toUpperCase();
   if(DB.rates.systems[key]){ toast('System "'+key+'" already exists'); return; }
+  const isSliding=confirm('Which window types will "'+key+'" be used for?\n\nOK = Sliding windows\nCancel = Casement / Fixed / Awning (openable) windows');
+  const isThermal=confirm('Is "'+key+'" a thermal-break system?\n\nOK = Yes, thermal break\nCancel = No, non-thermal');
   DB.rates.systems[key]=[];
+  DB.rates.systemMeta=DB.rates.systemMeta||{};
+  DB.rates.systemMeta[key]={thermal:isThermal?'YES':'NO',wtypes:isSliding?['sliding']:['casement','fixed','awning']};
   save();
   toast('System "'+key+'" created — use + Add Part to add profiles');
   renderRates();
@@ -5740,6 +5764,7 @@ function promptDelSystem(){
   }
   delete DB.rates.systems[sys];
   if(DB.rates.systemsDeleted) delete DB.rates.systemsDeleted[sys];
+  if(DB.rates.systemMeta) delete DB.rates.systemMeta[sys];
   save();
   toast('System "'+sys+'" deleted');
   renderRates();
