@@ -4389,7 +4389,7 @@ function migrateDgSlidingTrack(rates){
 function migrateDgSlidingRename(rates){
   if(!rates) return;
   const ren=(obj)=>{ if(obj && Object.prototype.hasOwnProperty.call(obj,'DG_SLIDING') && !Object.prototype.hasOwnProperty.call(obj,'MODERNA_SLIDING')){ obj.MODERNA_SLIDING=obj.DG_SLIDING; delete obj.DG_SLIDING; } };
-  ren(rates.systems); ren(rates.allowedWidths); ren(rates.systemsHaveRates); ren(rates.slidingHardware);
+  ren(rates.systems); ren(rates.widths); ren(rates.systemsHaveRates); ren(rates.slidingHardware);
 }
 // Companion to migrateDgSlidingRename: existing saved quotation windows store series:'DG_SLIDING'
 // directly on the window (and inside its cloud-synced data blob), independent of the rates dicts above,
