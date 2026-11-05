@@ -4274,7 +4274,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); migrateBuiltinSystemMetaCleanup(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4290,6 +4290,24 @@ function customSystemMeta(name){
   DB.rates.systemMeta=DB.rates.systemMeta||{};
   if(!DB.rates.systemMeta[name]) DB.rates.systemMeta[name]={thermal:'NO',wtypes:['casement','fixed','awning']};
   return DB.rates.systemMeta[name];
+}
+// One-time cleanup: hwSeriesList() (Rates > Casement & Awning / Fixed / Sliding Window Hardware
+// dropdowns) used to build its "is this name a built-in?" check from only the REQUESTED wtype's own
+// seed list, so a built-in series that belongs to a DIFFERENT wtype (e.g. BOX_SLIDING, built into
+// 'sliding' only) looked like a user-added custom system when the Casement & Awning / Fixed dropdowns
+// were rendered — triggering customSystemMeta() to auto-create and PERSIST a wtypes:['casement',
+// 'fixed','awning'] entry for it, which then made every sliding system show up in those dropdowns too.
+// hwSeriesList() is fixed below (now checks the full SEED_SERIES_SET, not just the requested wtype's
+// slice) so this can't happen again; this strips the bad entries already saved for any name that's a
+// built-in series — built-ins are always scoped by IL.thermal, never by systemMeta, so they should
+// never have an entry here at all. Must run AFTER SEED_SERIES_SET exists, so (like migrateHandleMeta)
+// it is NOT called from load() — only from resetRates() and the two cloud-rates-pull hook points.
+function migrateBuiltinSystemMetaCleanup(rates){
+  if(!rates||!rates.systemMeta) return;
+  Object.keys(rates.systemMeta).forEach(name=>{ if(SEED_SERIES_SET.has(name)) delete rates.systemMeta[name]; });
+  // also drop the old pre-rename 'DG_SLIDING' key specifically, in case it's still lingering from
+  // before the system was renamed to MODERNA_SLIDING and so no longer appears in SEED_SERIES_SET itself
+  if(rates.systemMeta['DG_SLIDING']) delete rates.systemMeta['DG_SLIDING'];
 }
 function seriesFor(wtype,thermal){
   // combo types use their primary type's series list
@@ -4564,6 +4582,11 @@ function hwSeriesList(wtypes){
   wtypes.forEach(wt=>{ const t=IL.thermal[wt]||IL.thermal.casement; (t.NO||[]).forEach(s=>seedSet.add(s)); (t.YES||[]).forEach(s=>seedSet.add(s)); });
   const custom=Object.keys(DB.rates.systems||{}).filter(name=>{
     if(seedSet.has(name)) return false;
+    // A built-in series that just happens to belong to a DIFFERENT window type (e.g. BOX_SLIDING is
+    // seeded only under 'sliding') is still a built-in, not a user-added custom system — skip it here
+    // rather than falling through to customSystemMeta(), which would otherwise auto-create and persist
+    // a wrong wtypes:['casement','fixed','awning'] tag for it and leak sliding systems into this list.
+    if(SEED_SERIES_SET.has(name)) return false;
     const meta=customSystemMeta(name);
     return wtypes.some(wt=>meta.wtypes.includes(wt));
   });
@@ -6875,7 +6898,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); migrateBuiltinSystemMetaCleanup(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6969,7 +6992,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); migrateBuiltinSystemMetaCleanup(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
