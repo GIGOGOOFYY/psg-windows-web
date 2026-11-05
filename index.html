@@ -5141,6 +5141,9 @@ function winFormHTML(w,r){
    </div>
    <div class="f4">
      ${design.inputs.map(i=>{
+       // A pure Fixed window has no shutter at all (a Casement+Fixed/Awning+Fixed combo still does,
+       // via its openable half) — don't ask for Shutter Height/Width there, it's meaningless input.
+       if(wtype==='fixed' && (i.n===6||i.n===7)) return '';
        // For sliding windows, auto-compute SH(g6) and SW(g7) — hide manual entry
        if(isSlide && i.n===6){ const ohFt=num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)||0; return `<div class="field"><label>Shutter Height (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${fmtLenFromFt(ohFt,dimUnit)}" disabled></div>`; }
        if(isSlide && i.n===7){ const owFt=num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${fmtLenFromFt(owFt/nsh,dimUnit)}" disabled></div>`; }
@@ -5248,10 +5251,17 @@ function addWindow(code){
   const category=cat?cat.category:'Casement', wt=typeFor(category);
   const series=(seriesFor(wt,'NO')[1]||seriesFor(wt,'NO')[0]||'');
   const des=(code&&SEED.designs[code])||SEED.defaultDesign; const dim={}; des.inputs.forEach(i=>dim[i.n]=i.def);
+  // Carry the catalogue's own Divider Qty/Direction into the new window's Mullions/Transoms, the same
+  // way handleQty and shutterQty already are — otherwise a catalogue item configured with dividers
+  // (e.g. "2 vertical") silently loses that on every new quotation and has to be re-entered by hand.
+  const catDivQty=cat&&cat.dividerQty!=null?num(cat.dividerQty):0;
+  const catDivDir=(cat&&cat.dividerDir)||'Vertical';
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
-    hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,brush:0,profit:20,_open:true};
+    hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,
+    fCols:catDivDir==='Vertical'?catDivQty:0,fRows:catDivDir==='Horizontal'?catDivQty:0,
+    brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
 }
 function delWindow(id){ const q=curr(); q.windows=q.windows.filter(w=>w.id!==id); save(); cloudSaveQuote(q); renderWindows(); }
