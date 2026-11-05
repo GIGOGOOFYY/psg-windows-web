@@ -4632,10 +4632,34 @@ function calcWindow(w){
     const ds=designSections(w,series); dsSec=ds;
     addSec('Outside Section','Outer',ds.outer);
     addSec('Divider Section','Divider',ds.divider);
+    // Catalogue-driven divider (separate from any per-design divider formula above, and from the
+    // Mullions/Transoms fields which are reserved for multi-segment/curtain-wall windows): most
+    // catalogue codes (e.g. PSG-C9V-91752) use defaultDesign, whose "divider" formula is null, so
+    // ds.divider is always 0 for them — the only place the divider info exists is the catalogue's own
+    // Divider Qty/Direction. Length = Opening Height × qty for a vertical divider (it runs the height
+    // of the frame), Opening Width × qty for horizontal. Only fires when no design formula already
+    // produced a divider length, so a catalogue code with its own custom divider formula isn't doubled.
+    if(ds.divider<=0){
+      const _dcat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+      const _dQty=Math.max(0,num(_dcat&&_dcat.dividerQty)||0);
+      const _dDir=((_dcat&&_dcat.dividerDir)||'none').toLowerCase();
+      if(_dQty>0){
+        if(_dDir==='vertical') addSec('Divider Section','Divider',OH*_dQty);
+        else if(_dDir==='horizontal') addSec('Divider Section','Divider',OW*_dQty);
+        else if(_dDir==='both'){ const _v=Math.floor(_dQty/2),_h=_dQty-_v;
+          if(_v>0) addSec('Divider Section','Divider',OH*_v);
+          if(_h>0) addSec('Divider Section (horizontal)','Divider',OW*_h); }
+      }
+    }
     { const _custBid=!!(SEED.designs[w.code]&&SEED.designs[w.code].bidding!=null);
       if(wtype!=='sliding' && !(!_custBid&&series==='ECONOMY'&&wtype!=='fixed')) addSec('Bidding Section','Bidding',ds.bidding); }
     if(w.netting) addSec('Netting Section','Net',ds.netting);
-    addSec('Shutter Section','Shutter',ds.shutter);
+    // Only add a Shutter Section when the window actually has shutters — a pure Fixed catalogue item
+    // (nShutters=0, e.g. PSG-C9V-91752) still evaluates ds.shutter from defaultDesign's formula
+    // (2*(g[6]+g[7])) using the Shutter Height/Width fields' leftover default values (those fields are
+    // hidden for Fixed windows but the dim values still exist at their defaults), which otherwise
+    // produced a phantom Shutter Section no shutter actually needs.
+    if((num(w.nShutters)||0)>0) addSec('Shutter Section','Shutter',ds.shutter);
     // ---- multi-segment fixed: internal mullions & transoms ----
     if(wtype==='fixed'){
       const fCols=Math.max(0,num(w.fCols)||0), fRows=Math.max(0,num(w.fRows)||0);
@@ -5264,25 +5288,16 @@ function addWindow(code){
   const category=cat?cat.category:'Casement', wt=typeFor(category);
   const series=(seriesFor(wt,'NO')[1]||seriesFor(wt,'NO')[0]||'');
   const des=(code&&SEED.designs[code])||SEED.defaultDesign; const dim={}; des.inputs.forEach(i=>dim[i.n]=i.def);
-  // Carry the catalogue's own Divider Qty/Direction into the new window's Mullions/Transoms, the same
-  // way handleQty and shutterQty already are — otherwise a catalogue item configured with dividers
-  // (e.g. "2 vertical") silently loses that on every new quotation and has to be re-entered by hand.
-  const catDivQty=cat&&cat.dividerQty!=null?Math.max(0,num(cat.dividerQty)||0):0;
-  // catalogue dividerDir is stored lowercase ('none'/'vertical'/'horizontal'/'both' — see the Rates
-  // catalogue editor's own <option value="..."> list and the SEED catalogue JSON), same convention the
-  // pricing engine itself already reads it with elsewhere. Split 'both' across vertical/horizontal the
-  // same way that pricing-engine divider-geometry block does, so the Mullions/Transoms shown here match
-  // what the BOM actually prices.
-  const catDivDir=((cat&&cat.dividerDir)||'none').toLowerCase();
-  let catDivV=0, catDivH=0;
-  if(catDivDir==='both'){ catDivV=Math.floor(catDivQty/2); catDivH=catDivQty-catDivV; }
-  else if(catDivDir==='vertical') catDivV=catDivQty;
-  else if(catDivDir==='horizontal') catDivH=catDivQty;
+  // NOTE: fCols/fRows (Mullions/Transoms) are NOT carried over from the catalogue's Divider Qty/
+  // Direction — those input fields are for multi-segment/curtain-wall windows (e.g. PSG-Z5J-23847),
+  // a separate feature. For an ordinary catalogue item like PSG-C9V-91752, the catalogue's own
+  // dividerQty/dividerDir drives the "Divider Section" aluminium line directly in calcWindow() —
+  // see the catalogue-driven divider block there — independent of these two fields.
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
     hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,
-    fCols:catDivV,fRows:catDivH,
+    fCols:0,fRows:0,
     brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
 }
