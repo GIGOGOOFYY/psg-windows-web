@@ -4393,6 +4393,14 @@ function lockTypesFor(wtype){
     .map(m=>m.lockType))];
   return [...new Set([...seed,...db])];
 }
+// The list of width columns shown/editable on Rates > Aluminium Profiles by System. User-extensible
+// (see promptAddSysWidth) — NOT a fixed hardcoded list; sysWidthsList() always reads the live, saved
+// list so a profile width like 114mm becomes selectable everywhere the moment it's added there.
+const SYS_WIDTHS_SEED=['50mm','65mm','75mm','95mm','100mm','127mm']; // only the initial/default set
+function sysWidthsList(){
+  if(!DB.rates.sysWidths||!DB.rates.sysWidths.length) DB.rates.sysWidths=SYS_WIDTHS_SEED.slice();
+  return DB.rates.sysWidths;
+}
 function widthsFor(series){
   const rs=rateSeries(series);
   const seedW=SEED.widths[rs];
@@ -4403,9 +4411,10 @@ function widthsFor(series){
   const set=new Set();
   sysParts(series).forEach(p=>partWidths(p).forEach(w=>set.add(w)));
   if(!set.size) return [];
-  // order like the Rates table's width columns, then any odd widths outside that fixed list
-  const ordered=SYS_WIDTHS.filter(w=>set.has(w));
-  const extra=[...set].filter(w=>!SYS_WIDTHS.includes(w));
+  // order like the Rates table's width columns, then any odd widths outside that list
+  const all=sysWidthsList();
+  const ordered=all.filter(w=>set.has(w));
+  const extra=[...set].filter(w=>!all.includes(w));
   return [...ordered,...extra];
 }
 function hasRates(series){
@@ -5586,6 +5595,8 @@ function renderRates(){
    <div class="card" style="margin-top:16px"><div class="hd"><b>Aluminium Profiles by System</b>
      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
        <button class="sm" onclick="addSysPart()">+ Add Part</button>
+       <button class="sm" onclick="promptAddSysWidth()">+ Width</button>
+       <button class="sm danger" onclick="promptDelSysWidth()">Remove Width</button>
        <button class="sm green" onclick="promptAddSystem()">+ New System</button>
        <button class="sm danger" onclick="promptDelSystem()">Delete System</button>
      </div></div><div class="bd">
@@ -5654,15 +5665,17 @@ const SEC_GROUPS=[
   ['Net',         ['Net Bottom','Net Top','Net Height']],
 ];
 const ALL_SECTIONS=SEC_GROUPS.flatMap(([,s])=>s);
-// Width options available for system profiles
-const SYS_WIDTHS=['50mm','65mm','75mm','95mm','100mm','127mm'];
+// Width options available for system profiles — see sysWidthsList() (defined near widthsFor): this is
+// a user-extensible list stored in DB.rates.sysWidths, not a fixed set. promptAddSysWidth() below adds
+// to it (e.g. 114mm) and promptDelSysWidth() removes an unused one.
 
 function renderSysTable(){
   const raw=val('sysSel')||Object.keys(DB.rates.systems)[0]; const sys=raw.replace(' (no rates)','');
   const parts=DB.rates.systems[sys], fins=SEED.finishes;
+  const sysWidths=sysWidthsList();
 
   // Width checkboxes per row
-  const widthCks=(p,i)=>SYS_WIDTHS.map(w=>{
+  const widthCks=(p,i)=>sysWidths.map(w=>{
     const ws=partWidths(normPart(p)); const chk=ws.includes(w)?'checked':'';
     return `<label style="display:inline-flex;flex-direction:column;align-items:center;gap:1px;font-size:10px;cursor:pointer;min-width:28px">
       <input type="checkbox" ${chk} style="width:13px;height:13px" onchange="toggleSysWidth('${jsq(sys)}',${i},'${w}',this.checked)">
@@ -5702,7 +5715,7 @@ function renderSysTable(){
   document.getElementById('sysTable').innerHTML=`<table style="width:100%;min-width:1200px;table-layout:auto">
     <thead><tr>
       <th style="min-width:120px">Part No.</th>
-      <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${SYS_WIDTHS.map(w=>w.replace('mm','')).join(' / ')}</span></th>
+      <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${sysWidths.map(w=>w.replace('mm','')).join(' / ')}</span></th>
       <th style="min-width:62px;text-align:right" title="Height member cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Height</span></th>
       <th style="min-width:62px;text-align:right" title="Width member (bottom/top) cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Width</span></th>
       <th style="min-width:340px">Sections Used</th>
@@ -5750,6 +5763,33 @@ function addSysPart(){
   save(); renderSysTable();
   /* scroll to bottom of table */
   const t=document.getElementById('sysTable'); if(t) t.scrollTop=t.scrollHeight;
+}
+function promptAddSysWidth(){
+  // Adds a new profile-width column to the Rates table (DB.rates.sysWidths) — e.g. 114mm — so a
+  // system's parts aren't limited to the starter 50/65/75/95/100/127mm list.
+  const raw=prompt('New profile width (e.g. 114mm):');
+  if(!raw||!raw.trim()) return;
+  let w=raw.trim().toLowerCase().replace(/\s+/g,'');
+  if(!/mm$/.test(w)) w=w+'mm';
+  const list=sysWidthsList();
+  if(list.includes(w)){ toast('Width "'+w+'" already exists'); return; }
+  list.push(w);
+  save();
+  toast('Width "'+w+'" added — tick it on any part row to use it');
+  renderSysTable();
+}
+function promptDelSysWidth(){
+  const list=sysWidthsList();
+  const w=prompt('Remove which width column? ('+list.join(', ')+')');
+  if(!w||!w.trim()) return;
+  const key=list.find(x=>x.toLowerCase()===w.trim().toLowerCase().replace(/\s+/g,''));
+  if(!key){ toast('Width "'+w.trim()+'" not found'); return; }
+  const inUse=Object.values(DB.rates.systems).some(parts=>parts.some(p=>partWidths(normPart(p)).includes(key)));
+  if(inUse){ toast('Width "'+key+'" is still ticked on a part — untick it first'); return; }
+  DB.rates.sysWidths=list.filter(x=>x!==key);
+  save();
+  toast('Width "'+key+'" removed');
+  renderSysTable();
 }
 function promptAddSystem(){
   const name=prompt('New system name (e.g. INNOVA_PLUS):');
