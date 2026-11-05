@@ -4507,14 +4507,27 @@ function sysParts(series){
   const extra=seed.filter(p=>!dbKeys.has(p.part+'|'+(partWidths(p)[0]||'')));
   return extra.length?[...db,...extra]:db;
 }
-function hasSection(series,sec){ return sysParts(series).some(p=>partSections(p).includes(sec)); }
+// Matches a part's tagged sections against a requested section name. Handles two tagging styles that
+// both exist in real data: the plain group tag ('Outer','Shutter','Bidding','Divider','Net' — what the
+// Casement/Fixed/Awning pricing engine asks for, and what the built-in seed systems are authored with)
+// and the granular per-position tags ('Outer Bottom'/'Outer Top'/'Outer Height', etc — what the Rates >
+// Aluminium Profiles by System "Sections Used" checkboxes actually produce, and what the Sliding engine
+// asks for). Without this, a part ticked through the Sections Used checkboxes (the only way the UI lets
+// you tag a part) could never satisfy a plain-group request, so a user-created Casement/Fixed/Awning
+// system's sections would silently never show up in a quotation no matter how they were ticked.
+function sectionMatches(secs,section){
+  if(secs.includes(section)) return true;
+  const grp=SEC_GROUPS.find(g=>g[0]===section);
+  return grp?grp[1].some(m=>secs.includes(m)):false;
+}
+function hasSection(series,sec){ return sysParts(series).some(p=>sectionMatches(partSections(p),sec)); }
 function getGlaze(series,part,section,width){
   // glaze tags live in SEED (source of truth), not in user's DB copy
   const sp=(SEED.systems[rateSeries(series)]||[]).find(p=>p.part===part&&p.section===section&&p.width===width);
   return sp?sp.glaze||null:null;
 }
 function partsFor(series,section,widthPref,glazing,glassThkMm){
-  let parts=sysParts(series).filter(p=>partSections(p).includes(section));
+  let parts=sysParts(series).filter(p=>sectionMatches(partSections(p),section));
   if(!parts.length) return [];
   if(widthPref){ const m=parts.filter(p=>{const ws=partWidths(p);return ws.length===0||ws.includes(String(widthPref));}); if(m.length) parts=m; }
   const hasTags=parts.some(p=>getGlaze(series,p.part,section,p.width));
