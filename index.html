@@ -4502,9 +4502,16 @@ function sysParts(series){
   const rs=rateSeries(series);
   const db=(DB.rates.systems[rs]||[]).map(normPart);
   const seed=(SEED.systems[rs]||[]).map(normPart);
-  // merge: add any SEED parts not yet in user's DB (keyed by part+firstWidth)
-  const dbKeys=new Set(db.map(p=>p.part+'|'+(partWidths(p)[0]||'')));
-  const extra=seed.filter(p=>!dbKeys.has(p.part+'|'+(partWidths(p)[0]||'')));
+  // merge: add any SEED parts not yet in user's DB at all (keyed by part number only).
+  // Keyed on part+width previously: editing a built-in part's width in Rates (e.g. retagging P13906
+  // from 101mm to 100mm) changed that part's merge key, so the untouched original seed row — still
+  // "101mm" — looked like a different, missing part and got silently re-added alongside the edit. The
+  // retagged width never actually replaced the old one; both just kept showing up forever. DB starts as
+  // a full clone of SEED (see load()), so every part number already in the catalog is already present
+  // in db from the start — this merge only needs to backfill a part number that's genuinely new to the
+  // user's saved data (e.g. added to the catalog after their data was first saved).
+  const dbKeys=new Set(db.map(p=>p.part));
+  const extra=seed.filter(p=>!dbKeys.has(p.part));
   return extra.length?[...db,...extra]:db;
 }
 // Matches a part's tagged sections against a requested section name. Handles two tagging styles that
