@@ -4771,10 +4771,15 @@ function calcWindow(w){
     if(w.handle){ const hLabel=[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', '); addHw(hLabel,effHq,hr,'pc',w.handle);
       handleAccs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*effHq, a.rate||0, a.unit||'pc'); }); }
     if(wtype!=='sliding' && num(w.brush)>0) addHw('Brush',num(w.brush),accRate('Brush'),'rft');
-    if(w.hinge==='J3'||w.hinge==='J4') addHw('Peg Stay (FC-310)',1,num((DB.rates.hinges||{})['FC-310']||accRate('FC-310')),'pc');
-    if((wtype==='casement'||wtype==='awning') && w.hinge){
+    // Peg Stay and Hinges are per-SHUTTER hardware — every openable shutter needs its own stay and its
+    // own set of hinges, regardless of how many handles the window has (handleQty is a separate count,
+    // used above for the lock/handle accessories). Was a flat qty that only happened to be right for a
+    // 1-shutter window; now scaled by shutterCount so a 2- or 3-shutter casement/awning gets the correct
+    // total. Also widened to the +fixed combo types, which have the same openable-shutter hinges/stays.
+    if(w.hinge==='J3'||w.hinge==='J4') addHw('Peg Stay (FC-310)',shutterCount,num((DB.rates.hinges||{})['FC-310']||accRate('FC-310')),'pc');
+    if((wtype==='casement'||wtype==='awning'||wtype==='casement+fixed'||wtype==='awning+fixed') && w.hinge){
       let hq2 = w.hinge==='HC-320'?2:(OH<=5?3:(OH<=8?4:5));
-      addHw('Hinges ('+w.hinge+')',hq2,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
+      addHw('Hinges ('+w.hinge+')',hq2*shutterCount,num((DB.rates.hinges||{})[w.hinge]||accRate(w.hinge)),'pc');
     }
     // Net material is now configured in the HW tables with netType filter — no hardcoded line
     // Dedicated net handle (its own, different model from the shutter handle) — a genuinely separate item, so it still gets its own line
