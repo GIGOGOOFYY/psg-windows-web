@@ -935,7 +935,7 @@ const SEED = /*__SEED__*/{
         }
       }
     ],
-    "DG_SLIDING": [
+    "MODERNA_SLIDING": [
       {
         "part": "DG-26",
         "width": "100mm",
@@ -2308,7 +2308,7 @@ const SEED = /*__SEED__*/{
           "ECONOMY_SLIDING",
           "DELUXE_SLIDING",
           "BOX_SLIDING",
-          "DG_SLIDING"
+          "MODERNA_SLIDING"
         ],
         "YES": []
       },
@@ -2325,7 +2325,7 @@ const SEED = /*__SEED__*/{
         "YES": ["URBAN","URBAN_PLUS","URBAN_COMFORT","EUROTHERM"]
       },
       "sliding+fixed": {
-        "NO": ["ECONOMY_SLIDING","DELUXE_SLIDING","BOX_SLIDING","DG_SLIDING"],
+        "NO": ["ECONOMY_SLIDING","DELUXE_SLIDING","BOX_SLIDING","MODERNA_SLIDING"],
         "YES": []
       }
     },
@@ -2509,7 +2509,7 @@ const SEED = /*__SEED__*/{
     "URBAN_COMFORT": [
       "65mm"
     ],
-    "DG_SLIDING": [
+    "MODERNA_SLIDING": [
       "100mm"
     ],
     "ECONOMY_SLIDING": [
@@ -2530,7 +2530,7 @@ const SEED = /*__SEED__*/{
     "INNOVA": true,
     "ECONOMY": true,
     "URBAN_COMFORT": true,
-    "DG_SLIDING": true,
+    "MODERNA_SLIDING": true,
     "ECONOMY_SLIDING": true,
     "DELUXE_SLIDING": true,
     "BOX_SLIDING": true
@@ -3928,7 +3928,7 @@ const SEED = /*__SEED__*/{
         "onlyNet": false
       }
     ],
-    "DG_SLIDING": [
+    "MODERNA_SLIDING": [
       {
         "name": "Sliding Wheels",
         "qty": "shutter_count*2",
@@ -4238,6 +4238,8 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   migrateModernaWidth(s.rates);
   migrateSlidingWheelsQty(s.rates);
   migrateDgSlidingTrack(s.rates);
+  migrateDgSlidingRename(s.rates);
+  migrateDgSlidingQuoteSeries(s.quotes);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4272,7 +4274,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4376,6 +4378,29 @@ function migrateDgSlidingTrack(rates){
     if(p.part==='DG-26' && p.track==null) p.track=2;
     if(p.part==='DG-26P' && p.track==null) p.track=3;
   });
+}
+// One-time rename: "DG_SLIDING" system renamed to "MODERNA_SLIDING" per direct request — same rename
+// pattern as every other sliding/casement system name (MODERNA, URBAN, etc.), just applied to this one
+// late. Must run AFTER migrateSlidingWheelsQty/migrateDgSlidingTrack above, which still look up the old
+// "DG_SLIDING" key to fix legacy saved data — once this runs, that key is gone and those two migrations
+// quietly no-op on every later load (their own existence checks already guard for that). Renames the key
+// in place on every rates dict that's keyed by system name, preserving whatever the user has customized
+// (Track field, prices, etc.) under it — never resets to SEED's version.
+function migrateDgSlidingRename(rates){
+  if(!rates) return;
+  const ren=(obj)=>{ if(obj && Object.prototype.hasOwnProperty.call(obj,'DG_SLIDING') && !Object.prototype.hasOwnProperty.call(obj,'MODERNA_SLIDING')){ obj.MODERNA_SLIDING=obj.DG_SLIDING; delete obj.DG_SLIDING; } };
+  ren(rates.systems); ren(rates.allowedWidths); ren(rates.systemsHaveRates); ren(rates.slidingHardware);
+}
+// Companion to migrateDgSlidingRename: existing saved quotation windows store series:'DG_SLIDING'
+// directly on the window (and inside its cloud-synced data blob), independent of the rates dicts above,
+// so renaming the system in Rates alone would leave old quotes pointing at a series that no longer
+// exists in DB.rates.systems and break their pricing. Returns the list of quotes actually changed, so
+// the cloud-pull call sites can push just those back up to Supabase.
+function migrateDgSlidingQuoteSeries(quotes){
+  if(!quotes) return [];
+  const changed=[];
+  quotes.forEach(q=>{ let ch=false; (q.windows||[]).forEach(w=>{ if(w.series==='DG_SLIDING'){ w.series='MODERNA_SLIDING'; ch=true; } }); if(ch) changed.push(q); });
+  return changed;
 }
 function brandsFor(series,lockType,wtype){
   // Read exclusively from real handles in Rates (DB.rates.handles) — same source Rates page shows,
@@ -6559,7 +6584,12 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
       windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
     let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
-    await cloudPullRates(); await cloudPullCatImages(); _quotesCloudTs=Date.now(); save(); setCloudDot('on'); toast('Pulled '+DB.quotes.length+' quotes + rates + images from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
+    // One-time: old saved windows with series:'DG_SLIDING' (renamed to 'MODERNA_SLIDING') — fix locally
+    // then push the affected quote(s) back up so the rename sticks in the cloud too.
+    const _dgQChanged=migrateDgSlidingQuoteSeries(DB.quotes);
+    await cloudPullRates(); await cloudPullCatImages(); _quotesCloudTs=Date.now(); save(); setCloudDot('on');
+    for(const _q of _dgQChanged){ await cloudSaveQuote(_q); }
+    toast('Pulled '+DB.quotes.length+' quotes + rates + images from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
 async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); await cloudSaveCatImages(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates + images to cloud'); }
 async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
 async function cloudSaveDevices(){ if(!SB)return; try{ await SB.from('psg_devices').delete().neq('id','__none__'); if((DB.devices||[]).length) await SB.from('psg_devices').insert(DB.devices.map(d=>({id:d.id,label:d.label||'',app_user:d.user||'',device_mode:DB.security.deviceMode})));
@@ -6845,7 +6875,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6899,7 +6929,9 @@ async function _checkQuotesSync(){
         DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
           windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
         let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
+        const _dgQChanged2=migrateDgSlidingQuoteSeries(DB.quotes);
         _quotesCloudTs=ts; save();
+        for(const _q of _dgQChanged2){ await cloudSaveQuote(_q); }
         toast('⟳ Quotes updated from cloud');
         if(document.querySelector('#view-quotes.active')) renderQuotes();
       }
@@ -6937,7 +6969,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
