@@ -3743,7 +3743,7 @@ const SEED = /*__SEED__*/{
     "ECONOMY_SLIDING": [
       {
         "name": "Sliding Wheels",
-        "qty": 2,
+        "qty": "shutter_count*2",
         "unit": "pc",
         "rate": 240,
         "onlyNet": false
@@ -3873,7 +3873,7 @@ const SEED = /*__SEED__*/{
     "BOX_SLIDING": [
       {
         "name": "Sliding Wheels",
-        "qty": 2,
+        "qty": "shutter_count*2",
         "unit": "pc",
         "rate": 240,
         "onlyNet": false
@@ -3931,7 +3931,7 @@ const SEED = /*__SEED__*/{
     "DG_SLIDING": [
       {
         "name": "Sliding Wheels",
-        "qty": 2,
+        "qty": "shutter_count*2",
         "unit": "pc",
         "rate": 120,
         "onlyNet": false
@@ -4236,6 +4236,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   // cloudPullAuth()->cloudPullRates() call (and the other 3 hook points), which execute after the
   // full script has finished evaluating, so those are safe.
   migrateModernaWidth(s.rates);
+  migrateSlidingWheelsQty(s.rates);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4270,7 +4271,7 @@ function findUser(u){ return (DB.users||[]).find(x=>x.username.toLowerCase()===S
 function deviceApproved(user){ if((DB.security.deviceMode||'off')==='off') return true;
   const id=deviceId(); return (DB.devices||[]).some(d=>d.id===id && (!d.user||d.user===user.username)); }
 function can(view){ return ME && (ME.role==='admin' || (ME.views||[]).includes(view)); }
-function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); save(); toast('Rates reset to workbook defaults'); }
+function resetRates(){ DB.rates=structuredClone(SEED); migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); save(); toast('Rates reset to workbook defaults'); }
 
 /* ============================ INTERLOCK HELPERS ============================ */
 function typeFor(cat){ return IL.categoryType[cat]||'casement'; }
@@ -4342,6 +4343,23 @@ function migrateModernaWidth(rates){
   rates.systems.MODERNA.forEach(p=>{
     if(Array.isArray(p.widths) && p.widths.includes('101mm')) p.widths=p.widths.filter(w=>w!=='101mm');
     if(p.width==='101mm') p.width='100mm';
+  });
+}
+// One-time cleanup: "Sliding Wheels" on ECONOMY_SLIDING/BOX_SLIDING/DG_SLIDING was saved as a flat
+// number (e.g. 2, or 3 on a since-edited DG_SLIDING row) instead of a per-shutter formula, so a 3-shutter
+// window got the same wheel count as a 2-shutter one. A set is 2 wheels per shutter, so the correct qty
+// is shutter_count*2 (the new shutter_count formula keyword added alongside this fix, keyword-first like
+// every other formula here e.g. shutter_perim*2) — not a fixed number. Only touches a row that's still a
+// plain number (i.e. never already turned into a formula by the user), and only the "Sliding Wheels" row
+// on these 3 series; any rate the user already customized is left untouched, only qty changes.
+function migrateSlidingWheelsQty(rates){
+  if(!rates||!rates.slidingHardware) return;
+  ['ECONOMY_SLIDING','BOX_SLIDING','DG_SLIDING'].forEach(series=>{
+    const list=rates.slidingHardware[series];
+    if(!Array.isArray(list)) return;
+    list.forEach(item=>{
+      if(item && item.name==='Sliding Wheels' && typeof item.qty==='number') item.qty='shutter_count*2';
+    });
   });
 }
 function brandsFor(series,lockType,wtype){
@@ -4687,16 +4705,20 @@ function calcWindow(w){
   const netHeightRft=w.netting?(SH/304.8)*netShutterCnt:0;
   const netWidthRft=w.netting?(SW/304.8)*netShutterCnt:0;
   // Formulas: keyword [* multiplier] — works in all HW tables for all window types
+  // shutter_count = number of shutters/panels on the window (w.nShutters, min 1) — lets a per-shutter
+  // hardware item (e.g. Sliding Wheels: 2 wheels per shutter) scale with the window instead of being a
+  // flat count that's only right for whatever shutter qty it happened to be typed in for.
+  const shutterCount=Math.max(1,nSh2);
   const evalQty=(qty)=>{
     if(typeof qty==='number') return qty;
     const s=String(qty).replace(/\s/g,'');
-    const m=s.match(/^(outer_perim|shutter_perim|net_perim|outer_area|shutter_area|net_area|net_height|net_width|net_count)(?:[*x]([\d.]+))?$/i);
+    const m=s.match(/^(outer_perim|shutter_perim|net_perim|outer_area|shutter_area|net_area|net_height|net_width|net_count|shutter_count)(?:[*x]([\d.]+))?$/i);
     if(!m) return num(s)||0;
     const kw=m[1].toLowerCase();
     const base=kw==='outer_perim'?outerPerim:kw==='shutter_perim'?shutPerim:kw==='net_perim'?netPerim
       :kw==='outer_area'?outerAreaSft:kw==='shutter_area'?shutAreaSft
       :kw==='net_area'?netAreaSft:kw==='net_height'?netHeightRft:kw==='net_width'?netWidthRft
-      :kw==='net_count'?netShutterCnt:0;
+      :kw==='net_count'?netShutterCnt:kw==='shutter_count'?shutterCount:0;
     return base*(m[2]?parseFloat(m[2]):1);
   };
   if(wtype!=='fixed'){
@@ -5616,7 +5638,7 @@ function renderRates(){
        <td class="right"><button class="ghost sm danger" onclick="delAcc('${jsq(k)}')">✕</button></td></tr>`).join('')}
      </tbody></table>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">
-       <b>Qty formulas:</b> <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> · <code>shutter_perim</code> · <code>net_area</code> (net panels area Sft) · <code>net_perim</code> · <code>net_height</code> · <code>net_width</code> · <code>net_count</code> (no. of net panels) · add multiplier: <code>net_area*1.05</code><br>
+       <b>Qty formulas:</b> <code>1</code> · <code>outer_area</code> (OH×OW Sft) · <code>shutter_area</code> (SH×SW×shutters Sft) · <code>outer_perim</code> · <code>shutter_perim</code> · <code>net_area</code> (net panels area Sft) · <code>net_perim</code> · <code>net_height</code> · <code>net_width</code> · <code>net_count</code> (no. of net panels) · <code>shutter_count</code> (no. of shutters/panels) · add multiplier: <code>net_area*1.05</code>, <code>shutter_count*2</code><br>
        <b>Net type</b> — set to <i>FIBER</i> or <i>S.S MESH</i> (or any type you add) so this item only appears when that netting is selected. <i>All</i> = any netting. Blank = always (netting or not). <b>Net only</b> = item hidden unless netting is selected (use with net_area/net_perim formulas).
      </div>
      </div></div>
@@ -5703,7 +5725,7 @@ function renderRates(){
        <select id="slideHWSel" onchange="renderSlideHWTable();if(ERL)restrictRates()">${hwSeriesList(['sliding']).map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
-     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Sliding windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>, <code>net_area</code>.</div>
+     <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Sliding windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>, <code>net_area</code>, <code>shutter_count</code> (no. of shutters — e.g. a per-shutter item like Sliding Wheels: <code>shutter_count*2</code> for 2 wheels per shutter).</div>
      <div id="slideHWTable" style="overflow:auto"></div>
    </div>
 `;
@@ -6012,7 +6034,7 @@ function renderSlideHWTable(){
   if(!DB.rates.slidingHardware) DB.rates.slidingHardware={};
   if(!DB.rates.slidingHardware[sys]) DB.rates.slidingHardware[sys]=[];
   const items=DB.rates.slidingHardware[sys];
-  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q==='net_area'?'net area (Sft)':q==='net_perim'?'net perim (rft)':q==='net_height'?'net height (rft)':q==='net_width'?'net width (rft)':q==='net_count'?'net count':q;
+  const qtyLabel=q=>typeof q==='number'?q:q==='shutter_perim'?'shutter perim':q==='outer_perim'?'outer perim':q==='outer_area'?'outer area (Sft)':q==='shutter_area'?'shutter area (Sft)':q==='net_area'?'net area (Sft)':q==='net_perim'?'net perim (rft)':q==='net_height'?'net height (rft)':q==='net_width'?'net width (rft)':q==='net_count'?'net count':q==='shutter_count'?'shutter count':q;
   // net types derived from DB.rates.accessories netting category + SEED nets
   const netTypes=()=>{const t=new Set();Object.entries(SEED.accessories||{}).forEach(([k,v])=>{if(v.category==='Net')t.add(k);});Object.keys(DB.rates.accessories||{}).forEach(k=>{const a=DB.rates.accessories[k];if(a&&a.category==='Net')t.add(k);}); return['','All',...t];};
   document.getElementById('slideHWTable').innerHTML=items.length?`<table style="min-width:820px"><thead><tr><th>Name</th><th>Qty / Formula</th><th>Unit</th><th class="right">Rate (Rs)</th><th title="Apply only when this profile width is used. Blank = all widths.">Width<br><span style="font-weight:400;font-size:10px">filter</span></th><th title="Check to show this item only when netting is selected">Net<br>only</th><th title="Show this item only for the selected netting type. Blank or — = all windows (netting or not). 'All' = any netting type.">Net<br>type</th><th></th></tr></thead><tbody>
@@ -6778,7 +6800,7 @@ async function cloudPullRates(){
       // support both new format {ts,data} and old format (plain rates object)
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
-      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); _ratesCloudTs=ts; save();
+      DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); _ratesCloudTs=ts; save();
       if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
     }
   }catch(e){console.warn('cloudPullRates',e);}
@@ -6870,7 +6892,7 @@ async function _checkRatesSync(){
       const parsed=JSON.parse(data.value);
       const ts=parsed.ts||0;
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
-        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); _ratesCloudTs=ts; save();
+        DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
         if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
       }
