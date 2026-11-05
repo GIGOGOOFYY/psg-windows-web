@@ -4672,17 +4672,15 @@ function calcWindow(w){
     // correctly doubles the outer frame's height (2*OH) — this was missing that ×2, undercounting by
     // half. (Opening Height × 2) × shutter qty: 2-track = OH×4, 3-track = OH×6.
     if(hasSection(series,'Shutter Height',_trackCnt)) addSec('Shutter Height Section','Shutter Height',SH*2*nSh);
-    const _catEntry=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const _ilDouble=(_catEntry&&_catEntry.interlockDouble)||w.code==='PSG-BGE-73948';
-    const ilMult=_ilDouble?2:1;
     // Interlock exists only at the joint BETWEEN adjacent shutters, not once per shutter — a 2-shutter
-    // (2-track) window has exactly 1 joint, a 3-shutter (3-track) window has 2. Was counted per shutter
-    // (nSh), which overcounted every sliding window by one interlock length. ilMult (the "double
-    // interlock profiles" catalogue flag, e.g. PSG-BGE-73948) is left applied on top, unchanged, since
-    // its own original intent is no longer documented — it now doubles the corrected per-joint amount
-    // instead of the previously-wrong per-shutter amount.
+    // (2-track) window has exactly 1 joint, a 3-shutter (3-track) window has 2. Confirmed directly
+    // against PSG-BGE-73948 (3-track → 19.83 rft = OH×2, no further doubling) and a plain 2-track window
+    // (9.83 rft = OH×1). The catalogue's old "double interlock profiles" flag (interlockDouble, and a
+    // hardcoded exception for PSG-BGE-73948 specifically) used to multiply this by 2 on top — removed
+    // entirely, since the confirmed-correct values for that exact catalogue code are the plain,
+    // undoubled per-joint amount.
     const ilJoints=Math.max(0,nSh-1);
-    if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',ilMult*SH*ilJoints);
+    if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',SH*ilJoints);
     if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net',_trackCnt)) addSec('Netting Section','Net',2*OH+nSh*SW);
   } else {
@@ -4950,11 +4948,9 @@ function prodGroups(w){
     if(hasSection(series,'Bidding Bottom',_trackCnt)) g('Bidding Bottom',partOf('Bidding Bottom'),[{len:_cutW(OW,'Bidding Bottom'),cnt:1*qty}]);
     if(hasSection(series,'Bidding Top',_trackCnt))    g('Bidding Top',   partOf('Bidding Top'),   [{len:_cutW(OW,'Bidding Top'),   cnt:1*qty}]);
     if(hasSection(series,'Bidding Height',_trackCnt)) g('Bidding Height',partOf('Bidding Height'),[{len:_cutH(OH,'Bidding Height'),cnt:2*qty}]);
-    const _catE=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
-    const _ilDbl=(_catE&&_catE.interlockDouble)||w.code==='PSG-BGE-73948';
-    const _ilMult=_ilDbl?2:1;
-    // Same joint-count fix as calcWindow(): nSh-1 joints, not nSh.
-    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:_ilMult*Math.max(0,nSh-1)*qty}]);
+    // Same joint-count fix as calcWindow(): nSh-1 joints, not nSh, and no "double interlock" multiplier
+    // (removed — confirmed-correct values for PSG-BGE-73948 are the plain, undoubled amount).
+    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:Math.max(0,nSh-1)*qty}]);
     // Net cuts
     if(w.netting){
       if(hasSection(series,'Net Top',_trackCnt))    g('Net Top',   partOf('Net Top'),   [{len:_cutW(SW,'Net Top'),   cnt:nSh*qty}]);
@@ -5543,18 +5539,10 @@ function openAddCatalogueItem(editCode){
        <div><label style="font-size:12px;font-weight:600">Divider Qty</label>
          <input id="ncDq" type="number" min="0" max="20" value="${existing?existing.dividerQty||0:0}" style="width:100%;margin-top:4px" placeholder="0 = none"></div>
      </div>
-     <div class="f2">
-       <div><label style="font-size:12px;font-weight:600">Divider Direction</label>
-         <select id="ncDdir" style="width:100%;margin-top:4px">
-           ${['none','horizontal','vertical','both'].map(d=>`<option value="${d}" ${existing&&(existing.dividerDir||'none')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
-         </select></div>
-       <div><label style="font-size:12px;font-weight:600">Interlock ×2</label>
-         <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
-           <input id="ncIlDouble" type="checkbox" style="width:auto" ${existing&&existing.interlockDouble?'checked':''}>
-           <span style="font-size:12px;color:#888">Double interlock profiles per shutter (e.g. BGE type)</span>
-         </div>
-       </div>
-     </div>
+     <div><label style="font-size:12px;font-weight:600">Divider Direction</label>
+       <select id="ncDdir" style="width:100%;margin-top:4px">
+         ${['none','horizontal','vertical','both'].map(d=>`<option value="${d}" ${existing&&(existing.dividerDir||'none')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+       </select></div>
      <div><label style="font-size:12px;font-weight:600">Web Image / GIF <span style="font-weight:400;color:#888;text-transform:none">(animated GIF or PNG — shown in app)</span></label>
        <input id="ncGifFile" type="file" accept="image/*,.gif" style="margin-top:4px" onchange="previewCatGif(this)">
        <div id="ncGifPreview" style="margin-top:8px;text-align:center">${existing&&existing.gif?`<img src="${existing.gif}" style="max-height:100px;border:1px solid var(--line)">`:''}</div>
@@ -5601,8 +5589,11 @@ function saveCatalogueItem(editCode){
   const gif=document.getElementById('ncGifData').value||'';
   if(!code||!cat){toast('Code and category are required');return;}
   if(!editCode && DB.rates.catalogue.find(c=>c.code===code)){toast('Code already exists — click ↺ New to generate another');return;}
-  const ilDouble=document.getElementById('ncIlDouble').checked;
-  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,interlockDouble:ilDouble};
+  // interlockDouble removed from the form — Interlock pricing no longer reads it (see calcWindow's
+  // Interlock Section comment), so it isn't collected or written for new/edited catalogue entries
+  // either. Existing catalogue entries still carry a harmless, now-ignored interlockDouble:false/true
+  // field; nothing reads it anymore so it's inert, not worth a migration to strip out.
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
