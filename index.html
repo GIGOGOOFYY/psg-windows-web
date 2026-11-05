@@ -4402,12 +4402,11 @@ function sysWidthsList(){
   return DB.rates.sysWidths;
 }
 function widthsFor(series){
-  const rs=rateSeries(series);
-  const seedW=SEED.widths[rs];
-  if(seedW) return seedW;
-  // Custom system (Rates > Aluminium Profiles by System > + New System): SEED.widths has no entry for
-  // it, so derive the width options directly from whatever widths its own parts are actually set up
-  // with, rather than leaving the Profile Width dropdown empty and the window permanently "incomplete".
+  // Always derive from the series' own configured parts (sysParts merges DB.rates.systems with the
+  // SEED defaults) — NOT from a fixed per-series list. This used to short-circuit through the static
+  // SEED.widths table for built-in series, which meant ticking a new width (e.g. 114mm) on a built-in
+  // system's parts in Rates never showed up as a selectable Profile Width. Now every series — built-in
+  // or custom — shows exactly the widths that are actually ticked on its own parts, nothing more.
   const set=new Set();
   sysParts(series).forEach(p=>partWidths(p).forEach(w=>set.add(w)));
   if(!set.size) return [];
@@ -4485,6 +4484,20 @@ function normPart(p){
 }
 function partSections(p){ return p.sections||(p.section?[p.section]:[]); }
 function partWidths(p){ return p.widths||(p.width?[p.width]:[]); }
+// Series names to list in the Rates > Casement/Fixed/Sliding Hardware dropdowns: built-in series for
+// the given window type(s) (from IL.thermal, both thermal values) PLUS any custom system (Rates > +
+// New System) scoped to that type via its systemMeta — same source of truth as seriesFor(), so a
+// custom system like DG_FIX AND OPENABLE is reachable here too, not just in the quotation editor.
+function hwSeriesList(wtypes){
+  const seedSet=new Set();
+  wtypes.forEach(wt=>{ const t=IL.thermal[wt]||IL.thermal.casement; (t.NO||[]).forEach(s=>seedSet.add(s)); (t.YES||[]).forEach(s=>seedSet.add(s)); });
+  const custom=Object.keys(DB.rates.systems||{}).filter(name=>{
+    if(seedSet.has(name)) return false;
+    const meta=customSystemMeta(name);
+    return wtypes.some(wt=>meta.wtypes.includes(wt));
+  });
+  return [...seedSet,...custom];
+}
 function sysParts(series){
   const rs=rateSeries(series);
   const db=(DB.rates.systems[rs]||[]).map(normPart);
@@ -5604,7 +5617,7 @@ function renderRates(){
      <div id="sysTable" style="overflow:auto"></div></div></div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Casement &amp; Awning Hardware</b>
-       <select id="casHWSel" onchange="renderCasHWTable();if(ERL)restrictRates()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="casHWSel" onchange="renderCasHWTable();if(ERL)restrictRates()">${hwSeriesList(['casement','awning']).map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addCasHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Casement &amp; Awning windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>.</div>
@@ -5612,7 +5625,7 @@ function renderRates(){
    </div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Fixed Window Hardware</b>
-       <select id="fixHWSel" onchange="renderFixedHWTable();if(ERL)restrictRates()">${['ECONOMY','MODERNA','INNOVA','EUROLINE','URBAN','URBAN_PLUS','URBAN_COMFORT','EUROTHERM'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="fixHWSel" onchange="renderFixedHWTable();if(ERL)restrictRates()">${hwSeriesList(['casement','awning','fixed','sliding']).map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addFixedHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Fixed windows (also applied to combo types: Casement+Fixed, Awning+Fixed, Sliding+Fixed). Qty formulas: <code>outer_perim</code>, <code>outer_area</code>.</div>
@@ -5620,7 +5633,7 @@ function renderRates(){
    </div>
    <div class="card" style="margin-top:16px">
      <div class="hd"><b>Sliding Window Hardware</b>
-       <select id="slideHWSel" onchange="renderSlideHWTable();if(ERL)restrictRates()">${['ECONOMY_SLIDING','DELUXE_SLIDING','BOX_SLIDING','DG_SLIDING'].map(s=>`<option>${s}</option>`).join('')}</select>
+       <select id="slideHWSel" onchange="renderSlideHWTable();if(ERL)restrictRates()">${hwSeriesList(['sliding']).map(s=>`<option>${s}</option>`).join('')}</select>
        <button class="sm" onclick="addSlideHWItem()">+ Add Item</button>
      </div>
      <div class="bd muted" style="font-size:11.5px;padding:6px 16px">Per-series hardware for Sliding windows. Qty formulas: <code>outer_perim</code>, <code>shutter_perim</code>, <code>outer_area</code>, <code>shutter_area</code>, <code>net_area</code>.</div>
