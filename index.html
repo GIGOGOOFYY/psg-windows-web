@@ -5267,13 +5267,22 @@ function addWindow(code){
   // Carry the catalogue's own Divider Qty/Direction into the new window's Mullions/Transoms, the same
   // way handleQty and shutterQty already are — otherwise a catalogue item configured with dividers
   // (e.g. "2 vertical") silently loses that on every new quotation and has to be re-entered by hand.
-  const catDivQty=cat&&cat.dividerQty!=null?num(cat.dividerQty):0;
-  const catDivDir=(cat&&cat.dividerDir)||'Vertical';
+  const catDivQty=cat&&cat.dividerQty!=null?Math.max(0,num(cat.dividerQty)||0):0;
+  // catalogue dividerDir is stored lowercase ('none'/'vertical'/'horizontal'/'both' — see the Rates
+  // catalogue editor's own <option value="..."> list and the SEED catalogue JSON), same convention the
+  // pricing engine itself already reads it with elsewhere. Split 'both' across vertical/horizontal the
+  // same way that pricing-engine divider-geometry block does, so the Mullions/Transoms shown here match
+  // what the BOM actually prices.
+  const catDivDir=((cat&&cat.dividerDir)||'none').toLowerCase();
+  let catDivV=0, catDivH=0;
+  if(catDivDir==='both'){ catDivV=Math.floor(catDivQty/2); catDivH=catDivQty-catDivV; }
+  else if(catDivDir==='vertical') catDivV=catDivQty;
+  else if(catDivDir==='horizontal') catDivH=catDivQty;
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
     lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
     hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,
-    fCols:catDivDir==='Vertical'?catDivQty:0,fRows:catDivDir==='Horizontal'?catDivQty:0,
+    fCols:catDivV,fRows:catDivH,
     brush:0,profit:20,_open:true};
   q.windows.push(w); save(); cloudSaveQuote(q); renderWindows();
 }
