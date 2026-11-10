@@ -5339,7 +5339,7 @@ function renderEditor(){
       <button class="${SUB==='bom'?'on':''}" onclick="setSub('bom')">BOM</button>
     </div>
     <div class="row" style="gap:8px">
-      ${(!fin&&perm('editQuotes')&&!curr()._isNewUnsaved)?`<button class="ghost sm" onclick="finalizeQuote('${q.id}')">🔒 Finalize</button>`:''}
+      ${(!fin&&!curr()._isNewUnsaved)?`<button class="ghost sm" onclick="finalizeQuote('${q.id}')">🔒 Finalize</button>`:''}
       <button class="ghost sm" onclick="openPrint('${q.id}')">🖶 Print / PDF</button>
     </div>
   </div>
