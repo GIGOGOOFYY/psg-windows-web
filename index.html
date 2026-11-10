@@ -4972,11 +4972,23 @@ function quoteTotal(q){ return (q.windows||[]).reduce((s,w)=>s+calcWindow(w).lin
 /* ============================ PRODUCTION / WASTAGE ENGINE ============================
  Cut list (mm) per section, then FIRST-FIT-DECREASING bin-packing across candidate stock
  lengths (STOCK_FT) — the app picks the bar length that MINIMISES wastage per section. */
-function packBars(lengths,barMm){
-  const arr=lengths.slice().sort((a,b)=>b-a), rem=[];
-  for(const p of arr){ let placed=false; for(let i=0;i<rem.length;i++){ if(rem[i]>=p-1e-6){rem[i]-=p;placed=true;break;} } if(!placed) rem.push(barMm-p); }
-  return rem.length;
+// First-fit-decreasing bin packing that also returns the actual piece→bar assignment, not just a
+// count. Items may be plain numbers (length only) or objects carrying a .len plus whatever extra
+// tags the caller wants back (e.g. which window a piece came from) — either way each bin collects
+// the original items it was given, so a caller that passed tagged objects can report exactly what's
+// on each physical bar. packBars (the plain bar-COUNT used by bestBar's per-candidate-length search)
+// is defined in terms of this so the two can never silently diverge the way Production vs BOM once did.
+function packBarsAssign(items,barMm){
+  const arr=items.slice().sort((a,b)=>(b.len??b)-(a.len??a));
+  const bins=[];
+  arr.forEach(it=>{
+    const len=it.len??it; let placed=false;
+    for(let i=0;i<bins.length;i++){ if(bins[i].remain>=len-1e-6){ bins[i].remain-=len; bins[i].items.push(it); placed=true; break; } }
+    if(!placed) bins.push({remain:barMm-len,items:[it]});
+  });
+  return bins;
 }
+function packBars(lengths,barMm){ return packBarsAssign(lengths,barMm).length; }
 // forcedFt: when given, skip the "pick whichever stock length wastes least" search and evaluate
 // only that one length. Used by the per-window production cut list so it reports bars against the
 // SAME stock length the project-wide BOM already chose for this profile+series (that one pools every
@@ -5142,18 +5154,46 @@ function glassOf(w){ const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,OH=_d.OH,OW=_d.OW,qty=
 /* hardware BOM lines for production (materials, with units) */
 function bomOf(w){ return calcWindow(w).hw.filter(h=>h.label!=='Labor' && !/^Glass — |^Spacer — /.test(h.label)).map(h=>({item:h.label,qty:+(Math.round(h.qty*100)/100),unit:h.unit})); }
 
-/* PROJECT-WIDE BOM: pool every window's cut pieces per profile, re-optimise the bar
-   length across the whole quote, then merge hardware and glass. */
+/* PROJECT-WIDE CUT PLAN: the single source of truth for how a profile actually gets cut. Pools EVERY
+   window's individual pieces for a profile+series into one list (not just one count per length — each
+   physical piece keeps which window it belongs to), picks the one stock length that wastes least for
+   that whole pool (same as before), then bin-packs that pool onto real, numbered bars so the operator
+   can be told "bar #1 holds these exact pieces from these exact windows" instead of a per-window total
+   that doesn't correspond to any physical bar. calcBOM's bar counts/wastage and the Production cut
+   list's per-bar breakdown both come from this one pass, so they can no longer disagree with each other
+   — nesting pieces from different windows onto the same bar is also what actually lowers wastage; a
+   quotation with several windows sharing a profile was never going to cut efficiently one window at a
+   time. */
+function calcCutPlan(q){
+  const pool={};
+  (q.windows||[]).forEach((w,wi)=>{
+    const label=`${String(wi+1).padStart(2,'0')} · ${w.name||w.code||'Window'}`;
+    prodGroups(w).forEach(gr=>{
+      const key=w.series+'|'+gr.part;
+      if(!pool[key]) pool[key]={series:w.series,profile:gr.part,sectionName:gr.name,items:[]};
+      gr.pieces.forEach(p=>{ for(let i=0;i<p.cnt;i++) pool[key].items.push({len:p.len,window:wi,label}); });
+    });
+  });
+  return Object.values(pool).map(grp=>{
+    const lenCounts={}; grp.items.forEach(it=>{ lenCounts[it.len]=(lenCounts[it.len]||0)+1; });
+    const pieces=Object.entries(lenCounts).map(([len,cnt])=>({len:+len,cnt}));
+    const bb=bestBar(pieces,grp.series);
+    const bins=bb.barMm?packBarsAssign(grp.items,bb.barMm):[];
+    const bars=bins.map((b,bi)=>{ const usedMm=b.items.reduce((s,it)=>s+it.len,0), wasteMm=bb.barMm-usedMm;
+      return {index:bi+1,items:b.items,usedMm,wasteMm,wastePct:bb.barMm?wasteMm/bb.barMm*100:0}; });
+    return {series:grp.series,profile:grp.profile,sectionName:grp.sectionName,barFt:bb.ft,bars,totalBars:bars.length};
+  }).sort((a,b)=>(a.series+a.profile).localeCompare(b.series+b.profile));
+}
+/* PROJECT-WIDE BOM: aluminium rows now come straight from calcCutPlan (see above) so the bar
+   count/length/wastage shown here always matches the per-bar cut list exactly; this just merges in
+   hardware and glass. */
 function calcBOM(q){
-  const alu={};
-  (q.windows||[]).forEach(w=>{ prodGroups(w).forEach(gr=>{
-    const key=w.series+'|'+gr.part;
-    if(!alu[key]) alu[key]={series:w.series,profile:gr.part,pieces:[]};
-    gr.pieces.forEach(p=>alu[key].pieces.push({len:p.len,cnt:p.cnt}));
-  }); });
-  const aluRows=Object.values(alu).map(g=>{ const bb=bestBar(g.pieces,g.series);
-    return {series:g.series,profile:g.profile,bars:bb.bars,barFt:bb.ft,wastagePct:bb.waste*100,usedMm:Math.round(bb.total)}; })
-    .sort((a,b)=>(a.series+a.profile).localeCompare(b.series+b.profile));
+  const aluRows=calcCutPlan(q).map(grp=>{
+    const barMm=grp.barFt*FT_MM, totalBarMm=grp.totalBars*barMm;
+    const usedMm=grp.bars.reduce((s,b)=>s+b.usedMm,0);
+    return {series:grp.series,profile:grp.profile,bars:grp.totalBars,barFt:grp.barFt,
+      wastagePct:totalBarMm?(totalBarMm-usedMm)/totalBarMm*100:0,usedMm:Math.round(usedMm)};
+  });
   const hw={};
   (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hw[k]=(hw[k]||0)+b.qty*wq; }); });
   const hwRows=Object.entries(hw).map(([k,v])=>{ const [item,unit]=k.split('|'); return {item,unit,qty:Math.round(v*100)/100}; });
@@ -5534,56 +5574,38 @@ function renderDesignSummary(){
     :'<div class="empty">No windows to summarise.</div>'}</div></div>`;
 }
 /* ---------- Production Work Order ---------- */
-/* Build per-profile grouped cut list across all windows */
-function calcWOProfiles(q){
-  const ws=q.windows||[], profileMap={};
-  // The project-wide BOM pools every window's cut pieces for a profile+series BEFORE picking a stock
-  // length, so it's the one place that already knows the correct length to buy/cut from for the whole
-  // job. Reuse that same choice here (per profile+series) instead of letting each window's row pick its
-  // own best-fit length independently — otherwise this cut list can show e.g. "12ft" for a window while
-  // the BOM tab shows "18ft" for the very same profile, leaving the operator with no idea which is real.
-  const barFtByKey={};
-  calcBOM(q).aluRows.forEach(r=>{ barFtByKey[r.series+'|'+r.profile]=r.barFt; });
-  ws.forEach((w,wi)=>{
-    const label=`${String(wi+1).padStart(2,'0')} · ${w.name||w.code||'Window'}`;
-    prodGroups(w).forEach(gr=>{
-      const key=gr.part;
-      if(!profileMap[key]) profileMap[key]={part:gr.part,sectionName:gr.name,windows:[]};
-      const forcedFt=barFtByKey[w.series+'|'+gr.part];
-      const bb=bestBar(gr.pieces,w.series,forcedFt);
-      profileMap[key].windows.push({idx:wi,label,pieces:gr.pieces,barFt:bb.ft,bars:bb.bars,wastagePct:bb.waste*100});
-    });
-  });
-  return Object.values(profileMap);
+// Groups pieces within one physical bar by (length, source window) so the cut list shows "2434×2
+// (01 · SD1)" instead of repeating each individual piece on its own line.
+function groupBarItems(items){
+  const byKey={};
+  items.forEach(it=>{ const k=it.len+'|'+it.label; if(!byKey[k]) byKey[k]={len:it.len,label:it.label,cnt:0}; byKey[k].cnt++; });
+  return Object.values(byKey).sort((a,b)=>b.len-a.len);
 }
 function renderProduction(){
   const q=curr(), ws=q.windows||[];
   if(!ws.length){ document.getElementById('subview').innerHTML='<div class="empty">No windows.</div>'; return; }
-  const profiles=calcWOProfiles(q);
+  const cutPlan=calcCutPlan(q);
   const bom=calcBOM(q);
   const hwAgg={}; ws.forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'||'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty*wq; }); });
 
   let html=`<div class="card" style="margin-bottom:14px">
-    <div class="hd"><b>Aluminium Cut List</b><span class="muted" style="font-size:12px">Grouped by profile · all windows</span><span class="chip">${bom.totalBars} bars total</span></div>
+    <div class="hd"><b>Aluminium Cut List</b><span class="muted" style="font-size:12px">One row per physical bar · pieces pooled across all windows</span><span class="chip">${bom.totalBars} bars total</span></div>
     <div class="bd" style="padding:0">`;
 
-  profiles.forEach(prof=>{
-    const totalBars=prof.windows.reduce((s,r)=>s+r.bars,0);
-    const avgWaste=prof.windows.length?prof.windows.reduce((s,r)=>s+r.wastagePct,0)/prof.windows.length:0;
+  cutPlan.forEach(prof=>{
+    const avgWaste=prof.bars.length?prof.bars.reduce((s,b)=>s+b.wastePct,0)/prof.bars.length:0;
     html+=`<div style="border-bottom:1px solid var(--line)">
       <div style="background:var(--panel2);padding:7px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line)">
-        <span style="font-family:monospace;font-weight:700;font-size:13px;background:var(--accent);color:#fff;padding:1px 8px;border-radius:4px">${esc(prof.part)}</span>
+        <span style="font-family:monospace;font-weight:700;font-size:13px;background:var(--accent);color:#fff;padding:1px 8px;border-radius:4px">${esc(prof.profile)}</span>
         <span class="muted" style="font-size:12px">${esc(prof.sectionName)}</span>
-        <span class="muted" style="margin-left:auto;font-size:12px">${totalBars} bar${totalBars!=1?'s':''} · ${avgWaste.toFixed(1)}% avg wastage</span>
+        <span class="muted" style="margin-left:auto;font-size:12px">${prof.totalBars} bar${prof.totalBars!=1?'s':''} of ${prof.barFt}ft · ${avgWaste.toFixed(1)}% avg wastage</span>
       </div>
-      <table style="margin:0"><thead><tr><th>#</th><th>Window</th><th>Cut Pieces (mm × qty)</th><th class="center">Bar</th><th class="center">Bars</th><th class="right">Wastage</th></tr></thead><tbody>
-      ${prof.windows.map(r=>`<tr>
-        <td style="font-family:monospace;font-weight:700;color:var(--accent);font-size:11px">/${String(r.idx+1).padStart(2,'0')}</td>
-        <td>${esc(r.label)}</td>
-        <td class="muted" style="font-family:monospace;font-size:12px">${r.pieces.map(p=>p.len+'×'+p.cnt).join(', ')}</td>
-        <td class="center">${r.barFt}ft</td>
-        <td class="center"><b>${r.bars}</b></td>
-        <td class="right" style="color:${r.wastagePct<20?'var(--green)':r.wastagePct<50?'var(--amber)':'var(--danger)'};font-weight:600">${r.wastagePct.toFixed(1)}%</td>
+      <table style="margin:0"><thead><tr><th>Bar #</th><th>Cut Pieces (mm × qty · window)</th><th class="center">Bar</th><th class="right">Wastage</th></tr></thead><tbody>
+      ${prof.bars.map(b=>`<tr>
+        <td style="font-family:monospace;font-weight:700;color:var(--accent);font-size:11px">${String(b.index).padStart(2,'0')}</td>
+        <td class="muted" style="font-family:monospace;font-size:12px">${groupBarItems(b.items).map(x=>`${x.len}×${x.cnt} <span style="opacity:.7">(${esc(x.label)})</span>`).join(', ')}</td>
+        <td class="center">${prof.barFt}ft</td>
+        <td class="right" style="color:${b.wastePct<20?'var(--green)':b.wastePct<50?'var(--amber)':'var(--danger)'};font-weight:600">${b.wastePct.toFixed(1)}%</td>
       </tr>`).join('')}
       </tbody></table></div>`;
   });
@@ -6437,7 +6459,7 @@ function doPrint(id,mode){
          return `<tr><td>${esc(g.outer)} ${esc(g.outerThk)} · ${dim}</td><td style="text-align:right">${u} pane${u!=1?'s':''}</td></tr>`;
        }).join('')}</tbody></table></div>`;
   } else if(mode==='prod'){ // prod — grouped-by-profile work order
-    const profiles=calcWOProfiles(q), allBom=calcBOM(q);
+    const cutPlan=calcCutPlan(q), allBom=calcBOM(q);
     const hwAgg={}; (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hwAgg[k]=(hwAgg[k]||0)+b.qty*wq; }); });
     const totalBars=allBom.totalBars;
 
@@ -6447,24 +6469,21 @@ function doPrint(id,mode){
       ${(q.windows||[]).map((w,i)=>`<tr><td style="font-weight:700;color:${pAcc()}">/${String(i+1).padStart(2,'0')}</td><td><b>${esc(w.name||w.code||'Window')}</b></td><td>${esc(w.category||'')}</td><td>${esc(w.series||'')}</td><td>${esc(w.finish||'')}</td><td style="text-align:center;font-family:monospace">${dimStr(w)}</td><td style="text-align:center">${num(w.qty)||1}</td></tr>`).join('')}
       </tbody></table></div>`;
 
-    // Per-profile cut blocks
+    // Per-profile cut blocks — one row per physical bar, pieces pooled across every window
     body+=`<h3 style="border-bottom:2px solid ${pAcc()};padding-bottom:4px;margin-bottom:10px">Aluminium Cut List — ${totalBars} bars total</h3>`;
-    profiles.forEach(prof=>{
-      const profTotalBars=prof.windows.reduce((s,r)=>s+r.bars,0);
+    cutPlan.forEach(prof=>{
       body+=`<div style="margin-bottom:10px;border:1px solid #ddd;border-radius:4px;overflow:hidden;page-break-inside:avoid">
         <div style="background:${pAcc()};color:#fff;padding:5px 10px;display:flex;gap:12px;align-items:center">
-          <span style="font-family:monospace;font-weight:700;font-size:13px;background:#fff;color:${pAcc()};padding:0 6px;border-radius:3px">${esc(prof.part)}</span>
+          <span style="font-family:monospace;font-weight:700;font-size:13px;background:#fff;color:${pAcc()};padding:0 6px;border-radius:3px">${esc(prof.profile)}</span>
           <span style="font-size:12px">${esc(prof.sectionName)}</span>
-          <span style="margin-left:auto;font-size:11px;opacity:.85">${profTotalBars} bar${profTotalBars!=1?'s':''}</span>
+          <span style="margin-left:auto;font-size:11px;opacity:.85">${prof.totalBars} bar${prof.totalBars!=1?'s':''} of ${prof.barFt}ft</span>
         </div>
-        <table style="margin:0"><thead><tr><th style="width:36px">#</th><th>Window</th><th>Cut Pieces (mm × qty)</th><th style="text-align:center">Bar</th><th style="text-align:center">Bars</th><th style="text-align:right">Wastage</th></tr></thead><tbody>
-        ${prof.windows.map(r=>`<tr>
-          <td style="font-family:monospace;font-weight:700;color:${pAcc()};font-size:11px">/${String(r.idx+1).padStart(2,'0')}</td>
-          <td>${esc(r.label)}</td>
-          <td style="font-family:monospace;font-size:12px">${r.pieces.map(p=>p.len+'×'+p.cnt).join(', ')}</td>
-          <td style="text-align:center">${r.barFt}ft</td>
-          <td style="text-align:center"><b>${r.bars}</b></td>
-          <td style="text-align:right;font-weight:600;color:${r.wastagePct<20?'#0f9d6b':r.wastagePct<50?'#d98a00':'#e5484d'}">${r.wastagePct.toFixed(1)}%</td>
+        <table style="margin:0"><thead><tr><th style="width:36px">Bar #</th><th>Cut Pieces (mm × qty · window)</th><th style="text-align:center">Bar</th><th style="text-align:right">Wastage</th></tr></thead><tbody>
+        ${prof.bars.map(b=>`<tr>
+          <td style="font-family:monospace;font-weight:700;color:${pAcc()};font-size:11px">${String(b.index).padStart(2,'0')}</td>
+          <td style="font-family:monospace;font-size:12px">${groupBarItems(b.items).map(x=>`${x.len}×${x.cnt} (${esc(x.label)})`).join(', ')}</td>
+          <td style="text-align:center">${prof.barFt}ft</td>
+          <td style="text-align:right;font-weight:600;color:${b.wastePct<20?'#0f9d6b':b.wastePct<50?'#d98a00':'#e5484d'}">${b.wastePct.toFixed(1)}%</td>
         </tr>`).join('')}
         </tbody></table></div>`;
     });
