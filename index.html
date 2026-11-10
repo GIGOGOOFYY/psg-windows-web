@@ -4977,8 +4977,13 @@ function packBars(lengths,barMm){
   for(const p of arr){ let placed=false; for(let i=0;i<rem.length;i++){ if(rem[i]>=p-1e-6){rem[i]-=p;placed=true;break;} } if(!placed) rem.push(barMm-p); }
   return rem.length;
 }
-function bestBar(pieces,series){
-  const stock=stockOptions(series);
+// forcedFt: when given, skip the "pick whichever stock length wastes least" search and evaluate
+// only that one length. Used by the per-window production cut list so it reports bars against the
+// SAME stock length the project-wide BOM already chose for this profile+series (that one pools every
+// window's pieces before picking a length) — otherwise the two screens can each independently
+// optimise a different bar length for the same profile and quote the operator two different lengths.
+function bestBar(pieces,series,forcedFt){
+  const stock=forcedFt?[forcedFt]:stockOptions(series);
   const lengths=[]; pieces.forEach(p=>{ for(let i=0;i<p.cnt;i++) lengths.push(p.len); });
   const total=lengths.reduce((a,b)=>a+b,0); if(!total) return {ft:0,barMm:0,bars:0,waste:0,total:0};
   const maxPiece=Math.max(...lengths); let best=null;
@@ -5532,12 +5537,20 @@ function renderDesignSummary(){
 /* Build per-profile grouped cut list across all windows */
 function calcWOProfiles(q){
   const ws=q.windows||[], profileMap={};
+  // The project-wide BOM pools every window's cut pieces for a profile+series BEFORE picking a stock
+  // length, so it's the one place that already knows the correct length to buy/cut from for the whole
+  // job. Reuse that same choice here (per profile+series) instead of letting each window's row pick its
+  // own best-fit length independently — otherwise this cut list can show e.g. "12ft" for a window while
+  // the BOM tab shows "18ft" for the very same profile, leaving the operator with no idea which is real.
+  const barFtByKey={};
+  calcBOM(q).aluRows.forEach(r=>{ barFtByKey[r.series+'|'+r.profile]=r.barFt; });
   ws.forEach((w,wi)=>{
     const label=`${String(wi+1).padStart(2,'0')} · ${w.name||w.code||'Window'}`;
     prodGroups(w).forEach(gr=>{
       const key=gr.part;
       if(!profileMap[key]) profileMap[key]={part:gr.part,sectionName:gr.name,windows:[]};
-      const bb=bestBar(gr.pieces,w.series);
+      const forcedFt=barFtByKey[w.series+'|'+gr.part];
+      const bb=bestBar(gr.pieces,w.series,forcedFt);
       profileMap[key].windows.push({idx:wi,label,pieces:gr.pieces,barFt:bb.ft,bars:bb.bars,wastagePct:bb.waste*100});
     });
   });
