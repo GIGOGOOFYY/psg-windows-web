@@ -4684,6 +4684,11 @@ function winIncomplete(w){
   return null;
 }
 function calcWindow(w){
+  // A finalized quotation's windows carry a frozen snapshot (see finalizeQuote) so this NEVER
+  // recomputes from live Rates once locked — a rate edit made after finalizing must not retroactively
+  // change a quotation that's already been quoted/ordered. The only way to get new numbers is a
+  // revision (createRevision), which strips _frozen and starts fresh from current rates.
+  if(w._frozen && w._frozen.calc) return w._frozen.calc;
   const wtype=w.wtype||'casement';
   const finish=w.finish||'Natural', series=w.series;
   const {g}=resolveG(w,series);
@@ -5006,6 +5011,10 @@ function bestBar(pieces,series,forcedFt){
   return {...best,total};
 }
 function prodGroups(w){
+  // Same freeze as calcWindow — a finalized quote's cut list is locked at finalization time, so a
+  // later edit to a profile/part in Rates (even a genuine bug fix) can't silently change the cut
+  // plan of a quotation that's already gone to production.
+  if(w._frozen && w._frozen.prod) return w._frozen.prod;
   const qty=num(w.qty)||1, rup=x=>Math.ceil(x), groups=[], series=w.series;
   const g=(name,part,pieces)=>{ const pf=pieces.filter(p=>p.len>0&&p.cnt>0); if(pf.length) groups.push({name,part,pieces:pf}); };
   /* pickFor: returns the actual part row selected for a section (carries .cutDed from DB row) */
@@ -5121,7 +5130,9 @@ function glassLabel(w){
   if(w.glazing==='Double'){ const u=unitThk(w); if(!(w.glassOuterThk||w.glassInnerThk)) return '—';
     return `${u?u+'mm ':''}DGU · ${w.glassOuter||'Clear'} ${w.glassOuterThk||''} + ${w.glassInner||'Clear'} ${w.glassInnerThk||''}`.replace(/\s+/g,' ').trim(); }
   const t=w.glassThk||''; return t?`${t} Tempered ${w.glassOuter||'Clear'}`:'—'; }
-function glassOf(w){ const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,OH=_d.OH,OW=_d.OW,qty=num(w.qty)||1;
+function glassOf(w){
+  if(w._frozen && w._frozen.glass) return w._frozen.glass; // same freeze — see calcWindow
+  const _d=dimsOf(w),SH=_d.SH,SW=_d.SW,OH=_d.OH,OW=_d.OW,qty=num(w.qty)||1;
   const wtype=w.wtype||'casement';
   const dbl=w.glazing==='Double', panesPer=dbl?2:1;
   // For combo types (casement+fixed, awning+fixed, etc.) the full opening OH*OW covers
@@ -5250,28 +5261,74 @@ function renderQuotes(){
   const qs=DB.quotes;
   C().innerHTML=`<div class="card"><div class="hd"><h3>All Quotations</h3><button class="sm" onclick="newQuote()">+ New Quotation</button></div>
    <div class="bd" style="padding:0">${qs.length?`<table><thead><tr><th>Quote #</th><th>Customer</th><th>Ref</th><th>Sales</th><th>Date</th><th class="center">Windows</th><th class="right">Value</th><th></th></tr></thead>
-    <tbody>${qs.slice().reverse().map(q=>`<tr><td><b>${esc(q.quoteNo||'—')}</b></td><td>${esc(q.customer||'—')}</td><td>${esc(q.ref||'')}</td><td>${esc(q.sales||'')}</td>
+    <tbody>${qs.slice().reverse().map(q=>{ const fin=q.status==='final';
+      return `<tr><td><b>${esc(q.quoteNo||'—')}</b> ${fin?'<span class="chip" style="background:#eef7ee;color:#2e7d32;border:1px solid #bfe3bf;font-size:10px;vertical-align:middle">🔒 FINAL</span>':'<span class="chip" style="font-size:10px;vertical-align:middle;opacity:.55">DRAFT</span>'}</td><td>${esc(q.customer||'—')}</td><td>${esc(q.ref||'')}</td><td>${esc(q.sales||'')}</td>
       <td>${q.date||''}</td><td class="center">${(q.windows||[]).length}</td><td class="right">${money(quoteTotal(q))}</td>
-      <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">${perm('editQuotes')?'Open':'View'}</button>
-        ${perm('deleteQuotes')?`<button class="ghost sm danger" onclick="delQuote('${q.id}')">✕</button>`:''}</td></tr>`).join('')}</tbody></table>`
+      <td class="right"><button class="ghost sm" onclick="editQuote('${q.id}')">${fin?'View':(perm('editQuotes')?'Open':'View')}</button>
+        ${(fin&&perm('editQuotes'))?`<button class="ghost sm" onclick="createRevision('${q.id}')">↻ Revision</button>`:''}
+        ${(!fin&&perm('deleteQuotes'))?`<button class="ghost sm danger" onclick="delQuote('${q.id}')">✕</button>`:''}</td></tr>`; }).join('')}</tbody></table>`
     :`<div class="empty"><div class="big">▤</div>No quotations yet.<br><br><button onclick="newQuote()">+ New Quotation</button></div>`}</div></div>`;
 }
 function newQuote(){
-  // Always derive next number from actual existing quotes so deletions don't leave gaps
-  let mx=1; (DB.quotes||[]).forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
-  const q={id:uid(),quoteNo:'PSG-Q'+String(DB.seq).padStart(4,'0'),customer:'',ref:'',sales:'',
+  // Always derive next number from actual existing quotes so deletions don't leave gaps. Matched
+  // against the PSG-Q#### sequence pattern specifically (not just "trailing digits") so a revision's
+  // "-R1"/"-R2" suffix never gets mistaken for the sequence number and silently lowballs it.
+  let mx=1; (DB.quotes||[]).forEach(q=>{const m=/PSG-Q(\d+)/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
+  const q={id:uid(),quoteNo:'PSG-Q'+String(DB.seq).padStart(4,'0'),customer:'',ref:'',sales:'',status:'draft',
   date:new Date().toISOString().slice(0,10),deliver:'',windows:[],_isNewUnsaved:true}; DB.seq++; DB.quotes.push(q); save(); cloudSaveQuote(q); CURR=q.id; SUB='design'; go('editor'); }
 function editQuote(id){ CURR=id; SUB='design'; go('editor'); }
-function delQuote(id){ if(!confirm('Delete this quotation?'))return; DB.quotes=DB.quotes.filter(q=>q.id!==id); save(); cloudDeleteQuote(id); renderQuotes(); toast('Deleted'); }
+function delQuote(id){ const q=DB.quotes.find(x=>x.id===id);
+  if(q&&q.status==='final'){ toast('Finalized quotations are a permanent record and cannot be deleted — create a revision instead if something needs to change.'); return; }
+  if(!confirm('Delete this quotation?'))return; DB.quotes=DB.quotes.filter(q=>q.id!==id); save(); cloudDeleteQuote(id); renderQuotes(); toast('Deleted'); }
+// Locks a quotation's price, cut list and hardware/glass BOM forever: every window's live
+// calcWindow/prodGroups/glassOf result is snapshotted onto it (see the _frozen check at the top of
+// each of those functions), so a later Rates edit can never retroactively change what was already
+// quoted or sent to production. The ONLY way to correct a finalized quotation afterward is
+// createRevision() below — the original stays untouched as a permanent historical record.
+function finalizeQuote(id){
+  const q=DB.quotes.find(x=>x.id===id); if(!q) return;
+  if(q.status==='final') return;
+  if(!(q.windows||[]).length){ toast('Add at least one window before finalizing.'); return; }
+  if(!confirm('Finalize "'+(q.quoteNo||'this quotation')+'"?\n\nIts price, cut list and hardware/glass BOM will be locked permanently. Future rate or catalogue changes will never affect it again. To fix anything afterward you will need to create a revision.\n\nContinue?')) return;
+  (q.windows||[]).forEach(w=>{ w._frozen=JSON.parse(JSON.stringify({calc:calcWindow(w),prod:prodGroups(w),glass:glassOf(w)})); });
+  q.status='final'; q.finalizedAt=Date.now();
+  save(); cloudSaveQuote(q); renderEditor(); toast('Quotation finalized and locked');
+}
+// Spins off a new, fully-editable draft from a finalized quotation — a deep copy with every
+// window's _frozen snapshot stripped (so it recomputes live from CURRENT rates again), numbered as a
+// revision of the original (e.g. PSG-Q0004-R1, -R2, ...). The finalized original is never touched.
+function createRevision(id){
+  const orig=DB.quotes.find(x=>x.id===id); if(!orig) return;
+  const rootId=orig.rootId||orig.id;
+  const rootQ=DB.quotes.find(x=>x.id===rootId)||orig;
+  const baseNo=(rootQ.quoteNo||'Quote').replace(/-R\d+$/,'');
+  let maxRev=0; DB.quotes.forEach(x=>{ if(x.id===rootId||x.rootId===rootId) maxRev=Math.max(maxRev,x.revisionNo||0); });
+  const nextRev=maxRev+1;
+  const copy=JSON.parse(JSON.stringify(orig));
+  copy.id=uid(); copy.status='draft'; delete copy.finalizedAt;
+  copy.rootId=rootId; copy.revisionOf=orig.id; copy.revisionNo=nextRev;
+  copy.quoteNo=baseNo+'-R'+nextRev;
+  (copy.windows||[]).forEach(w=>{ delete w._frozen; });
+  delete copy._isNewUnsaved;
+  DB.quotes.push(copy); save(); cloudSaveQuote(copy);
+  CURR=copy.id; SUB='design'; go('editor');
+  toast('Revision '+nextRev+' created — editable with current rates');
+}
 function curr(){ return DB.quotes.find(q=>q.id===CURR); }
 
 /* ---------- Editor (tabs: Windows / Design Summary / Production) ---------- */
 function renderEditor(){
   const q=curr(); if(!q){go('quotes');return;}
-  QRO=false; QPO=!perm('editQuotes')&&!curr()._isNewUnsaved;
+  const fin=q.status==='final';
+  // A finalized quotation locks the whole editor the same way permission-based read-only already
+  // does — QRO already disables every input/select/textarea in #ed-wrap (see the .qro CSS rule) and
+  // hides Add/Delete window and Save; finalization just forces that same state on for everyone,
+  // regardless of edit permission, since nobody should be able to mutate a locked historical record.
+  QRO=fin||!perm('editQuotes')&&!curr()._isNewUnsaved; QPO=!fin&&!perm('editQuotes')&&!curr()._isNewUnsaved;
   C().innerHTML=`
   <div id="ed-wrap" class="${QRO?'qro':''}">
-  ${QRO?`<div style="background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#856404">View Only</span><span class="muted" style="font-size:13px"> — You don't have permission to edit this quotation. Contact an admin to make changes.</span></div>`:''}
+  ${fin?`<div style="background:#eef7ee;border:1.5px solid #4caf50;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#2e7d32">Finalized</span><span class="muted" style="font-size:13px">${q.finalizedAt?' — locked '+new Date(q.finalizedAt).toLocaleDateString():''}. Price, cut list and BOM are permanently frozen — rate changes will never affect this quotation again.</span>${perm('editQuotes')?`<button class="ghost sm" style="margin-left:auto" onclick="createRevision('${q.id}')">↻ Create Revision</button>`:''}</div>`
+    :(QRO?`<div style="background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#856404">View Only</span><span class="muted" style="font-size:13px"> — You don't have permission to edit this quotation. Contact an admin to make changes.</span></div>`:'')}
   ${QPO?`<div style="background:#e8f4e8;border:1.5px solid #4caf50;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">⚠️</span><span style="font-weight:700;color:#2e7d32">Limited Access</span><span class="muted" style="font-size:13px"> — You can add and edit windows but cannot delete them.</span></div>`:''}
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:14px">
     <button class="ghost sm" onclick="go('quotes')">← Back</button>
@@ -5281,7 +5338,10 @@ function renderEditor(){
       <button class="${SUB==='prod'?'on':''}" onclick="setSub('prod')">Production</button>
       <button class="${SUB==='bom'?'on':''}" onclick="setSub('bom')">BOM</button>
     </div>
-    <button class="ghost sm" onclick="openPrint('${q.id}')">🖶 Print / PDF</button>
+    <div class="row" style="gap:8px">
+      ${(!fin&&perm('editQuotes')&&!curr()._isNewUnsaved)?`<button class="ghost sm" onclick="finalizeQuote('${q.id}')">🔒 Finalize</button>`:''}
+      <button class="ghost sm" onclick="openPrint('${q.id}')">🖶 Print / PDF</button>
+    </div>
   </div>
   <div class="card" style="margin-bottom:16px"><div class="bd"><div class="f3">
     <div class="field"><label>Quote No#</label><input id="q_no" value="${esc(q.quoteNo)}"></div>
@@ -6684,20 +6744,35 @@ function winToDB(w,qid,pos){ const {_open,...clean}=w; const d=dimsOf(w);
   return {id:w.id,quote_id:qid,position:pos,name:w.name||'',code:w.code||'',series:w.series||'',
     open_h:d.OH,open_w:d.OW,qty:num(w.qty)||1,data:clean}; }
 function winFromDB(r){ return r.data?{...r.data,id:r.id}:{id:r.id,name:r.name,code:r.code,series:r.series,qty:r.qty}; }
+// The psg_quotes table only has columns for the original fields (quote_no/customer/ref/sales/
+// quote_date/deliver) — adding finalization status requires a schema change we can't assume the
+// user's Supabase project has applied. Reusing the existing psg_settings key/value table (already
+// used for _quotes_ts/_perms/deviceMode) avoids that entirely: one row per quote, keyed _qmeta_<id>,
+// holding whatever of {status, finalizedAt, rootId, revisionOf, revisionNo} that quote has set. Pure
+// quote-level metadata only — _frozen itself lives inside each window's own JSONB data column
+// (winToDB already spreads the whole window object there), so it survives cloud sync automatically.
+function quoteMeta(q){ const m={}; ['status','finalizedAt','rootId','revisionOf','revisionNo'].forEach(k=>{ if(q[k]!=null) m[k]=q[k]; }); return m; }
 async function cloudSaveQuote(q){ if(!SB)return;
   try{ await SB.from('psg_quotes').upsert({id:q.id,quote_no:q.quoteNo,customer:q.customer,ref:q.ref,sales:q.sales,quote_date:q.date,deliver:q.deliver});
     await SB.from('psg_windows').delete().eq('quote_id',q.id);
     if((q.windows||[]).length) await SB.from('psg_windows').insert(q.windows.map((w,i)=>winToDB(w,q.id,i)));
+    const meta=quoteMeta(q);
+    if(Object.keys(meta).length) await SB.from('psg_settings').upsert({key:'_qmeta_'+q.id,value:JSON.stringify(meta)});
     const qts=Date.now(); await SB.from('psg_settings').upsert({key:'_quotes_ts',value:String(qts)}); _quotesCloudTs=qts;
     setCloudDot('on'); }catch(e){ setCloudDot('err'); console.warn('cloud save',e); } }
-async function cloudDeleteQuote(id){ if(!SB)return; try{ await SB.from('psg_windows').delete().eq('quote_id',id); await SB.from('psg_quotes').delete().eq('id',id); const qts=Date.now(); await SB.from('psg_settings').upsert({key:'_quotes_ts',value:String(qts)}); _quotesCloudTs=qts; }catch(e){console.warn(e);} }
+async function cloudDeleteQuote(id){ if(!SB)return; try{ await SB.from('psg_windows').delete().eq('quote_id',id); await SB.from('psg_quotes').delete().eq('id',id); await SB.from('psg_settings').delete().eq('key','_qmeta_'+id); const qts=Date.now(); await SB.from('psg_settings').upsert({key:'_quotes_ts',value:String(qts)}); _quotesCloudTs=qts; }catch(e){console.warn(e);} }
 async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
   try{ const {data:qs,error:e1}=await SB.from('psg_quotes').select('*'); if(e1)throw e1;
     const {data:wsr,error:e2}=await SB.from('psg_windows').select('*'); if(e2)throw e2;
+    const {data:sr,error:e3}=await SB.from('psg_settings').select('*'); if(e3)throw e3;
     const byq={}; (wsr||[]).forEach(r=>{(byq[r.quote_id]=byq[r.quote_id]||[]).push(r);});
+    const qmeta={}; (sr||[]).forEach(r=>{ if(r.key&&r.key.indexOf('_qmeta_')===0){ try{ qmeta[r.key.slice(7)]=JSON.parse(r.value); }catch(ep){} } });
     DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
+      ...(qmeta[q.id]||{}),
       windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
-    let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
+    // Matched against the PSG-Q#### sequence pattern specifically — see newQuote() — so a revision's
+    // "-R1"/"-R2" suffix never gets mistaken for the sequence number after a cloud pull either.
+    let mx=1; DB.quotes.forEach(q=>{const m=/PSG-Q(\d+)/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
     // One-time: old saved windows with series:'DG_SLIDING' (renamed to 'MODERNA_SLIDING') — fix locally
     // then push the affected quote(s) back up so the rename sticks in the cloud too.
     const _dgQChanged=migrateDgSlidingQuoteSeries(DB.quotes);
@@ -7039,10 +7114,13 @@ async function _checkQuotesSync(){
       if(ts>_quotesCloudTs){
         const {data:qs}=await SB.from('psg_quotes').select('*');
         const {data:wsr}=await SB.from('psg_windows').select('*');
+        const {data:sr}=await SB.from('psg_settings').select('*');
         const byq={}; (wsr||[]).forEach(r=>{(byq[r.quote_id]=byq[r.quote_id]||[]).push(r);});
+        const qmeta={}; (sr||[]).forEach(r=>{ if(r.key&&r.key.indexOf('_qmeta_')===0){ try{ qmeta[r.key.slice(7)]=JSON.parse(r.value); }catch(ep){} } });
         DB.quotes=(qs||[]).map(q=>({id:q.id,quoteNo:q.quote_no,customer:q.customer,ref:q.ref,sales:q.sales,date:q.quote_date,deliver:q.deliver,
+          ...(qmeta[q.id]||{}),
           windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
-        let mx=1; DB.quotes.forEach(q=>{const m=/(\d+)$/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
+        let mx=1; DB.quotes.forEach(q=>{const m=/PSG-Q(\d+)/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
         const _dgQChanged2=migrateDgSlidingQuoteSeries(DB.quotes);
         _quotesCloudTs=ts; save();
         for(const _q of _dgQChanged2){ await cloudSaveQuote(_q); }
