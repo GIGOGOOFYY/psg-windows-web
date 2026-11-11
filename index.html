@@ -4240,6 +4240,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   migrateDgSlidingTrack(s.rates);
   migrateDgSlidingRename(s.rates);
   migrateDgSlidingQuoteSeries(s.quotes);
+  migrateComboWtypeFix(s.quotes, s.rates&&s.rates.catalogue);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4418,6 +4419,31 @@ function migrateDgSlidingQuoteSeries(quotes){
   if(!quotes) return [];
   const changed=[];
   quotes.forEach(q=>{ let ch=false; (q.windows||[]).forEach(w=>{ if(w.series==='DG_SLIDING'){ w.series='MODERNA_SLIDING'; ch=true; } }); if(ch) changed.push(q); });
+  return changed;
+}
+// Companion to the addWindow() fix above: before that fix, every window added from a catalogue entry
+// whose own wtype was a combo type (casement+fixed / awning+fixed / sliding+fixed) got stored with the
+// WRONG plain wtype instead (e.g. 'sliding' instead of 'sliding+fixed'), because addWindow() derived
+// wtype from the catalogue's broad category ('Sliding') rather than its wtype field. That silently
+// dropped the fixed pane's divider section, dimension split, hardware and glass from every affected
+// window's price, BOM and cut list — confirmed on a real saved window, the fix changed its price by
+// over 1.6 million Rs. Repairs any already-saved window whose code still matches a catalogue entry and
+// whose stored wtype no longer matches that entry's current wtype. Returns the list of quotes actually
+// changed, so cloud-pull call sites can push just those back up. Never touches a window with no code
+// (a "+ Blank window"), since those pick their wtype directly from the Category dropdown and were never
+// affected by this bug.
+function migrateComboWtypeFix(quotes,catalogue){
+  if(!quotes||!catalogue) return [];
+  const byCode={}; catalogue.forEach(c=>{ if(c.code) byCode[c.code]=c; });
+  const changed=[];
+  quotes.forEach(q=>{ let ch=false;
+    (q.windows||[]).forEach(w=>{
+      if(!w.code) return;
+      const c=byCode[w.code];
+      if(c && c.wtype && w.wtype!==c.wtype){ w.wtype=c.wtype; ch=true; }
+    });
+    if(ch) changed.push(q);
+  });
   return changed;
 }
 function brandsFor(series,lockType,wtype){
@@ -5567,7 +5593,15 @@ function pickPartFor(id,section,partName){
 }
 function addWindow(code){
   const q=curr(), cat=code?DB.rates.catalogue.find(c=>c.code===code):null;
-  const category=cat?cat.category:'Casement', wt=typeFor(category);
+  // A catalogue entry's own wtype (set in the catalogue editor's Window Type dropdown, e.g.
+  // 'sliding+fixed') is the authority on whether this code is a combo type — it's a SEPARATE field
+  // from the broad display category ('Sliding'), which only groups tiles in the catalogue browser.
+  // typeFor(category) can only ever return a bare base type ('sliding'), since 'Sliding' is never one
+  // of the combo category labels itself ('Sliding+Fixed' is) — so falling back to it for every
+  // catalogue pick silently dropped every combo code (…+Fixed) down to its plain base type, losing the
+  // fixed pane's divider, dimension split, hardware and glass entirely. Prefer cat.wtype; only fall
+  // back to typeFor() for legacy catalogue entries saved before the wtype field existed.
+  const category=cat?cat.category:'Casement', wt=(cat&&cat.wtype)?cat.wtype:typeFor(category);
   const series=(seriesFor(wt,'NO')[1]||seriesFor(wt,'NO')[0]||'');
   const des=(code&&SEED.designs[code])||SEED.defaultDesign; const dim={}; des.inputs.forEach(i=>dim[i.n]=i.def);
   // NOTE: fCols/fRows (Mullions/Transoms) are NOT carried over from the catalogue's Divider Qty/
@@ -6777,7 +6811,9 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     // then push the affected quote(s) back up so the rename sticks in the cloud too.
     const _dgQChanged=migrateDgSlidingQuoteSeries(DB.quotes);
     await cloudPullRates(); await cloudPullCatImages(); _quotesCloudTs=Date.now(); save(); setCloudDot('on');
+    const _wtQChanged=migrateComboWtypeFix(DB.quotes, DB.rates.catalogue);
     for(const _q of _dgQChanged){ await cloudSaveQuote(_q); }
+    for(const _q of _wtQChanged){ if(!_dgQChanged.includes(_q)) await cloudSaveQuote(_q); }
     toast('Pulled '+DB.quotes.length+' quotes + rates + images from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
 async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); await cloudSaveCatImages(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates + images to cloud'); }
 async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
@@ -7122,8 +7158,10 @@ async function _checkQuotesSync(){
           windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
         let mx=1; DB.quotes.forEach(q=>{const m=/PSG-Q(\d+)/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
         const _dgQChanged2=migrateDgSlidingQuoteSeries(DB.quotes);
+        const _wtQChanged2=migrateComboWtypeFix(DB.quotes, DB.rates.catalogue);
         _quotesCloudTs=ts; save();
         for(const _q of _dgQChanged2){ await cloudSaveQuote(_q); }
+        for(const _q of _wtQChanged2){ if(!_dgQChanged2.includes(_q)) await cloudSaveQuote(_q); }
         toast('⟳ Quotes updated from cloud');
         if(document.querySelector('#view-quotes.active')) renderQuotes();
       }
