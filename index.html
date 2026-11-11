@@ -4503,7 +4503,13 @@ function hingesFor(series, thermal, wtype){
   return [...new Set([...seed,...db])];
 }
 function lockTypesFor(wtype){
-  const seed=IL.lockTypes[wtype]||[];
+  // combo types use their primary type's lock list — IL.lockTypes only has base keys (casement, awning,
+  // sliding, fixed), same reasoning as seriesFor's base-type fallback. Without this, a combo window (now
+  // correctly tagged e.g. 'sliding+fixed' by addWindow) got an empty lock-type list, defaulted to no
+  // lock type at all, and got stuck on "Window incomplete — Lock type is required" with no way to fix it
+  // except manually reselecting Series to force a re-render.
+  const base=wtype==='casement+fixed'?'casement':wtype==='awning+fixed'?'awning':wtype==='sliding+fixed'?'sliding':wtype;
+  const seed=IL.lockTypes[base]||[];
   // also include lock types from user-added DB handles matching this window type
   const db=[...new Set(Object.values(DB.rates.handleMeta||{})
     .filter(m=>m.lockType && (m.winType===wtype||m.winType==='both'||(!m.winType&&wtype==='casement')))
@@ -5656,7 +5662,7 @@ function addWindow(code){
   // see the catalogue-driven divider block there — independent of these two fields.
   const w={id:uid(),code:code||'',name:cat?cat.category+' window':'',category,wtype:wt,thermal:'NO',
     series,width:widthsFor(series)[0]||'',finish:'Natural',dim,nShutters:cat&&cat.shutterQty!=null?cat.shutterQty:2,qty:1,
-    lockType:(IL.lockTypes[wt]||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
+    lockType:(lockTypesFor(wt)||[])[0]||'',handleBrand:'',handle:'',handleQty:cat&&cat.handleQty!=null?cat.handleQty:1,
     hinge:'',netting:'',netHandleMode:'',netHandleBrand:'',netHandle:'',netHandleQty:(cat&&cat.shutterQty!=null?cat.shutterQty:2),glazing:'Single',glassThk:'',glassOuter:'Clear',glassInner:'Clear',glassOuterThk:'',glassInnerThk:'',spacer:(SEED.spacers[0]||{}).size||'',dividers:0,
     fCols:0,fRows:0,
     brush:0,profit:20,_open:true};
