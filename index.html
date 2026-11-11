@@ -4567,7 +4567,8 @@ function designSections(w,series){ const {des,g}=resolveG(w,series);
   return {g,des,outer,divider:evalExpr(des.divider,g,series),
     bidding,netting:evalExpr(des.netting,g,series),shutter:evalExpr(des.shutter,g,series)}; }
 function dimsOf(w){ const {g}=resolveG(w,w.series); const OH=num(g[4]),OW=num(g[5]);
-  if((w.wtype||'casement')==='sliding'){ const nSh=Math.max(1,num(w.nShutters)||2); return {g,OH,OW,SH:OH,SW:OW/nSh}; }
+  const _wt=w.wtype||'casement';
+  if(_wt==='sliding'||_wt==='sliding+fixed'){ const nSh=Math.max(1,num(w.nShutters)||2); return {g,OH,OW,SH:OH,SW:OW/nSh}; }
   return {g,OH,OW,SH:num(g[6])||OH,SW:num(g[7])||OW}; }
 /* linear-coefficient decomposition of a section formula → cut pieces [{len(ft),cnt}] */
 function sectionPieces(expr,g,series){ if(!expr) return []; const base=evalExpr(expr,g,series), out=[];
@@ -4729,12 +4730,23 @@ function calcWindow(w){
   // revision (createRevision), which strips _frozen and starts fresh from current rates.
   if(w._frozen && w._frozen.calc) return w._frozen.calc;
   const wtype=w.wtype||'casement';
+  // sliding+fixed is still, structurally, a sliding window (track count, outer/shutter split, interlock
+  // joints) — the "+fixed" only matters for the catalogue's own divider/hardware setup, not for any of
+  // that. Before this, sliding+fixed fell through to the generic casement-style design-formula branch
+  // below, which: (a) collapsed Outer/Shutter into one lumped, wrong-formula section instead of the
+  // correct Bottom+Top+Height split (confirmed directly: PSG-W6R-66422's Shutter priced at 14rft instead
+  // of the correct OH×4+OW×2 = 57rft for 2 shutters), (b) lost the 2-track vs 3-track (DG-26 vs DG-26P)
+  // filter entirely since _trackCnt only ever applied to literal wtype 'sliding', so both tracks showed
+  // as options together, and (c) lost the Interlock section (DG-28), which only exists inside the
+  // wtype==='sliding' branch. Verified against the user's own handwritten shop-drawing numbers for
+  // SD1-SD5 (PQV-6770): every Outer/Shutter/Interlock rft value now matches exactly.
+  const isSlidingLike=(wtype==='sliding'||wtype==='sliding+fixed');
   const finish=w.finish||'Natural', series=w.series;
   const {g}=resolveG(w,series);
   const OH=num(g[4]), OW=num(g[5]);
   const _nShCalc=Math.max(1,num(w.nShutters)||2);
-  const SH=(wtype==='sliding')?OH:(num(g[6])||OH);
-  const SW=(wtype==='sliding')?OW/_nShCalc:(num(g[7])||OW);
+  const SH=(isSlidingLike)?OH:(num(g[6])||OH);
+  const SW=(isSlidingLike)?OW/_nShCalc:(num(g[7])||OW);
   const area=OH*OW, per_open=2*(OH+OW), per_shut=2*(SH+SW);
   const sec=[]; let dsSec={outer:0,divider:0,bidding:0,netting:0,shutter:0};
   const picks=w.picks||{};
@@ -4745,7 +4757,7 @@ function calcWindow(w){
   // Track filter: only sliding windows have track-specific parts (e.g. DG-26 = 2-track, DG-26P =
   // 3-track, same series/section/width but only one is physically correct for a given shutter count).
   // Non-sliding types pass null so trackMatches() never filters anything for them.
-  const _trackCnt=wtype==='sliding'?(num(w.nShutters)||2):null;
+  const _trackCnt=isSlidingLike?(num(w.nShutters)||2):null;
   const addSec=(label,section,length,widthPref)=>{
     if(!hasSection(series,section,_trackCnt)||length<=0) return;
     const wp=widthPref||w.width;
@@ -4754,7 +4766,7 @@ function calcWindow(w){
     sec.push({label,section,options,part:part?part.part:'—',width:part?part.width:'',length:+length.toFixed(2),unit:'rft',rate,amount:length*rate});
   };
 
-  if(wtype==='sliding'){
+  if(isSlidingLike){
     const nSh=num(w.nShutters)||2;
     // Outer Section not used for sliding windows
     ['Outer Bottom','Outer Top'].forEach(s=>{ if(hasSection(series,s,_trackCnt)) addSec(s+' Section',s,OW); });
@@ -4773,7 +4785,7 @@ function calcWindow(w){
     // undoubled per-joint amount.
     const ilJoints=Math.max(0,nSh-1);
     if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',SH*ilJoints);
-    if(wtype!=='sliding' && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
+    if(!isSlidingLike && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net',_trackCnt)) addSec('Netting Section','Net',2*OH+nSh*SW);
   } else {
     // per-design formulas from the workbook design sheet
@@ -4840,12 +4852,12 @@ function calcWindow(w){
   // ---- hardware & accessories ----  (qty carries a unit: pc / rft / Sft)
   const hw=[];
   const addHw=(label,qty,rate,unit,note)=>{ const amt=qty*rate; if(amt||qty) hw.push({label,qty:+qty,rate,unit:unit||'pc',amount:amt,note:note||''}); };
-  const bidLen = wtype==='sliding'?(isUrban(series)?0:per_open):dsSec.bidding;
-  const shutLen = wtype==='sliding'?per_shut:dsSec.shutter;
+  const bidLen = isSlidingLike?(isUrban(series)?0:per_open):dsSec.bidding;
+  const shutLen = isSlidingLike?per_shut:dsSec.shutter;
   // ---- shared qty formula evaluator (all window types) ----
   const nSh2=num(w.nShutters)||2;
   // Net shutter count: sliding = nShutters/2 (1 net panel per 2 sliding panels); casement/awning = nShutters (each sash has its own net)
-  const netShutterCnt=w.netting?(wtype==='sliding'?Math.max(1,Math.round(nSh2/2)):nSh2):0;
+  const netShutterCnt=w.netting?(isSlidingLike?Math.max(1,Math.round(nSh2/2)):nSh2):0;
   const shutPerim=2*(SH+SW)*nSh2, outerPerim=2*(OH+OW);
   const netPerim=w.netting?2*(SH+SW)*netShutterCnt:0;
   const outerAreaSft=area; // OH×OW in sqft
@@ -4882,7 +4894,7 @@ function calcWindow(w){
     const effHq = hq + (netUsesShutterHandle?netShQty:0);
     if(w.handle){ const hLabel=[w.lockType,w.handleBrand,w.handle].filter(Boolean).join(', '); addHw(hLabel,effHq,hr,'pc',w.handle);
       handleAccs.forEach(a=>{ if(a.name && (a.rate||a.qty)) addHw(a.name, (a.qty||1)*effHq, a.rate||0, a.unit||'pc'); }); }
-    if(wtype!=='sliding' && num(w.brush)>0) addHw('Brush',num(w.brush),accRate('Brush'),'rft');
+    if(!isSlidingLike && num(w.brush)>0) addHw('Brush',num(w.brush),accRate('Brush'),'rft');
     // Peg Stay and Hinges are per-SHUTTER hardware — every openable shutter needs its own stay and its
     // own set of hinges, regardless of how many handles the window has (handleQty is a separate count,
     // used above for the lock/handle accessories). Was a flat qty that only happened to be right for a
@@ -5062,10 +5074,11 @@ function prodGroups(w){
   // Track filter (see trackMatches): only sliding windows have track-specific parts (DG-26=2-track vs
   // DG-26P=3-track sharing the same series/section/width), so the cut list picks the same part the
   // live BOM priced, instead of possibly defaulting to whichever track-tagged part happens to be first.
-  const _trackCnt=(w.wtype||'casement')==='sliding'?(num(w.nShutters)||2):null;
+  const _isSlidingLikeProd=((w.wtype||'casement')==='sliding'||(w.wtype||'casement')==='sliding+fixed');
+  const _trackCnt=_isSlidingLikeProd?(num(w.nShutters)||2):null;
   const pickFor=(sec)=>pickPart(series,sec,w.width,(w.picks||{})[sec],_glaz,_gThkMm,_trackCnt);
   const partOf=(sec)=>{ const p=pickFor(sec); return p?p.part+(p.width?(' '+p.width):''):''; };
-  if((w.wtype||'casement')==='sliding'){
+  if(_isSlidingLikeProd){
     const d=dimsOf(w),OH=d.OH,OW=d.OW,SH=d.SH,SW=d.SW,nSh=num(w.nShutters)||2;
     /* cutDedH = deduction for height members, cutDedW = deduction for width (bottom/top) members */
     const _dedH=(sec)=>{ const p=pickFor(sec); return p?num(p.cutDedH??p.cutDed??0):0; };
