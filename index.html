@@ -142,6 +142,9 @@
   #printRoot h3{margin:18px 0 6px}
   .login-bg{position:fixed;inset:0;background:linear-gradient(135deg,#0d2b57,#0b1622);display:none;align-items:center;justify-content:center;z-index:300;padding:20px}
   .qro input,.qro select,.qro textarea{ pointer-events:none!important; background:var(--bg2,#f5f8f6)!important; color:var(--muted)!important; cursor:default!important; }
+  /* On a finalized quotation (.fin-dim, set alongside .qro), size fields alone stay genuinely
+     editable — see finalDimChange(). Higher specificity than the .qro rule above wins the cascade. */
+  .fin-dim input[data-k^="dim_"]{ pointer-events:auto!important; background:var(--panel)!important; color:var(--text)!important; cursor:text!important; border-color:#ffc107!important; }
   .login-bg.show{display:flex}
   .login-box{background:var(--panel);color:var(--text);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:100%;max-width:380px;padding:28px}
   .login-box .logo{border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
@@ -5385,7 +5388,7 @@ function finalizeQuote(id){
 // Spins off a new, fully-editable draft from a finalized quotation — a deep copy with every
 // window's _frozen snapshot stripped (so it recomputes live from CURRENT rates again), numbered as a
 // revision of the original (e.g. PSG-Q0004-R1, -R2, ...). The finalized original is never touched.
-function createRevision(id){
+function createRevision(id,applyFn,reasonMsg){
   const orig=DB.quotes.find(x=>x.id===id); if(!orig) return;
   const rootId=orig.rootId||orig.id;
   const rootQ=DB.quotes.find(x=>x.id===rootId)||orig;
@@ -5398,9 +5401,59 @@ function createRevision(id){
   copy.quoteNo=baseNo+'-R'+nextRev;
   (copy.windows||[]).forEach(w=>{ delete w._frozen; });
   delete copy._isNewUnsaved;
+  // applyFn: optional patch (e.g. finalDimChange seeding the new revision with the size that was just
+  // typed on the finalized original) applied to the fresh, unfrozen copy before it's ever saved — the
+  // finalized original's own window data is never touched by this path.
+  if(applyFn) applyFn(copy);
   DB.quotes.push(copy); save(); cloudSaveQuote(copy);
   CURR=copy.id; SUB='design'; go('editor');
-  toast('Revision '+nextRev+' created — editable with current rates');
+  toast(reasonMsg || ('Revision '+nextRev+' created — editable with current rates'));
+}
+// Fires on change (blur/Enter, not every keystroke) for a dimension field on a FINALIZED quote —
+// the one group of fields winFormHTML leaves genuinely editable even when QRO locks everything else
+// (the real-world need: a quote is finalized from a tentative/drawing size, then the exact measured
+// size comes in once the job is won). Unlike upd(), this NEVER writes the new size onto the finalized
+// window's own w.dim — that would silently desync the locked record's raw dimension data from the
+// price/cut-list/BOM that were frozen at finalize time (w._frozen), even though nothing displayed
+// would visibly show it until some future action stripped _frozen. Instead it evaluates the new size
+// on a disposable clone, compares the resulting amount and material (bar) quantity against the frozen
+// snapshot, and only ever commits the change by spinning off a revision via createRevision() — the
+// finalized original is always left exactly as it was.
+function finalDimChange(id,el){
+  const q=curr(); if(!q||q.status!=='final') return;
+  const w=(q.windows||[]).find(x=>x.id===id); if(!w) return;
+  const k=el.dataset.k, parts=k.slice(4).split('_'), n=+parts[0];
+  const draftDim=JSON.parse(JSON.stringify(w.dim||{}));
+  if(parts.length===1){ draftDim[n]=parseLenToFt(el.value,w.dimUnit||'mm'); }
+  else{
+    const grp=el.closest('.dimgrp'), unit=grp?grp.dataset.unit:(w.dimUnit||'mm');
+    const gv=p=>{ const e=grp&&grp.querySelector(`[data-part="${p}"]`); return e?num(e.value):0; };
+    const den=gv('den')||16, inches=gv('whole')+(gv('num')/den);
+    draftDim[n]= unit==='ft' ? (gv('ft')+inches/12) : inches/12;
+  }
+  const oldFt=num((w.dim||{})[n]), newFt=num(draftDim[n]);
+  if(Math.abs(newFt-oldFt)<1e-6){ renderWindows(); return; } // not a real change — just redraw clean
+
+  const draftW=JSON.parse(JSON.stringify(w)); delete draftW._frozen; draftW.dim=draftDim;
+  let newCalc,newProd;
+  try{ newCalc=calcWindow(draftW); newProd=calcProduction(draftW); }
+  catch(e){ toast('Could not evaluate that size.'); renderWindows(); return; }
+  const oldCalc=calcWindow(w), oldProd=calcProduction(w); // both still read w._frozen, i.e. the locked values
+
+  const amountUp = newCalc.lineTotal > oldCalc.lineTotal+0.5;
+  const qtyUp = newProd.totalBars > oldProd.totalBars;
+  const applyDim=copy=>{ const cw=(copy.windows||[]).find(x=>x.id===id); if(cw) cw.dim=draftDim; };
+
+  if(amountUp||qtyUp){
+    const parts2=[]; if(amountUp) parts2.push('amount Rs '+Math.round(oldCalc.lineTotal)+' → Rs '+Math.round(newCalc.lineTotal));
+    if(qtyUp) parts2.push('material '+oldProd.totalBars+' → '+newProd.totalBars+' bars');
+    createRevision(q.id,applyDim,'Size increases '+parts2.join(' and ')+' — created revision with the new size');
+  } else {
+    const msg='New size: amount Rs '+Math.round(oldCalc.lineTotal)+' → Rs '+Math.round(newCalc.lineTotal)+
+      ', material '+oldProd.totalBars+' → '+newProd.totalBars+' bars.\n\nCreate a revision to apply this size, or Cancel to keep this quotation locked at its original size.';
+    if(confirm(msg)) createRevision(q.id,applyDim,'Revision created with the new size');
+    else renderWindows(); // w.dim on the finalized quote was never touched — this just redraws it back to the locked value
+  }
 }
 function curr(){ return DB.quotes.find(q=>q.id===CURR); }
 
@@ -5414,8 +5467,8 @@ function renderEditor(){
   // regardless of edit permission, since nobody should be able to mutate a locked historical record.
   QRO=fin||!perm('editQuotes')&&!curr()._isNewUnsaved; QPO=!fin&&!perm('editQuotes')&&!curr()._isNewUnsaved;
   C().innerHTML=`
-  <div id="ed-wrap" class="${QRO?'qro':''}">
-  ${fin?`<div style="background:#eef7ee;border:1.5px solid #4caf50;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#2e7d32">Finalized</span><span class="muted" style="font-size:13px">${q.finalizedAt?' — locked '+new Date(q.finalizedAt).toLocaleDateString():''}. Price, cut list and BOM are permanently frozen — rate changes will never affect this quotation again.</span>${perm('editQuotes')?`<button class="ghost sm" style="margin-left:auto" onclick="createRevision('${q.id}')">↻ Create Revision</button>`:''}</div>`
+  <div id="ed-wrap" class="${QRO?'qro':''}${fin?' fin-dim':''}">
+  ${fin?`<div style="background:#eef7ee;border:1.5px solid #4caf50;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#2e7d32">Finalized</span><span class="muted" style="font-size:13px">${q.finalizedAt?' — locked '+new Date(q.finalizedAt).toLocaleDateString():''}. Price, cut list and BOM are permanently frozen — rate changes will never affect this quotation again. Size fields (outlined amber below) can still be updated with the exact measured size — this either auto-creates a revision if it increases the amount/material, or asks before creating one otherwise.</span>${perm('editQuotes')?`<button class="ghost sm" style="margin-left:auto" onclick="createRevision('${q.id}')">↻ Create Revision</button>`:''}</div>`
     :(QRO?`<div style="background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">🔒</span><span style="font-weight:700;color:#856404">View Only</span><span class="muted" style="font-size:13px"> — You don't have permission to edit this quotation. Contact an admin to make changes.</span></div>`:'')}
   ${QPO?`<div style="background:#e8f4e8;border:1.5px solid #4caf50;border-radius:10px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:10px"><span style="font-size:16px">⚠️</span><span style="font-weight:700;color:#2e7d32">Limited Access</span><span class="muted" style="font-size:13px"> — You can add and edit windows but cannot delete them.</span></div>`:''}
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -5505,7 +5558,12 @@ function opt(list,cur){ return list.map(x=>`<option ${String(cur)===String(x)?'s
 function optBlank(list,cur){ return `<option value="">—</option>`+list.map(x=>`<option ${String(cur)===String(x)?'selected':''}>${esc(x)}</option>`).join(''); }
 function winFormHTML(w,r){
   const wtype=w.wtype||'casement';
+  const q=curr(), fin=!!(q&&q.status==='final');
   const bind=`oninput="upd('${w.id}',this)" onchange="upd('${w.id}',this)"`;
+  // On a finalized quotation, size fields are the one thing that stays genuinely editable (QRO
+  // locks everything else) — see finalDimChange(). Only onchange (blur/Enter), never oninput, so
+  // a revision isn't spun off mid-keystroke while the user is still typing the new size.
+  const dimBind = fin ? `onchange="finalDimChange('${w.id}',this)"` : bind;
   const seriesList=seriesFor(wtype,w.thermal||'NO');
   const brands=brandsFor(w.series,w.lockType,wtype), models=modelsFor(w.handleBrand,w.lockType,wtype), hinges=hingesFor(w.series,w.thermal||'NO',wtype);
   // Dedicated net handle reuses the same handle catalogue, with no lock-type filter (a net handle isn't a lock)
@@ -5555,7 +5613,7 @@ function winFormHTML(w,r){
        if(isSlide && i.n===6){ const ohFt=num((w.dim||{})[4]??design.inputs.find(x=>x.n===4)?.def)||0; return `<div class="field"><label>Shutter Height (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = Opening Height</span></label><input value="${fmtLenFromFt(ohFt,dimUnit)}" disabled></div>`; }
        if(isSlide && i.n===7){ const owFt=num((w.dim||{})[5]??design.inputs.find(x=>x.n===5)?.def)||0; const nsh=Math.max(1,num(w.nShutters)||2); return `<div class="field"><label>Shutter Width (${dimUnitLabel}) <span class="muted" style="text-transform:none">· auto = OW ÷ ${nsh} shutters</span></label><input value="${fmtLenFromFt(owFt/nsh,dimUnit)}" disabled></div>`; }
        const valFt=(w.dim||{})[i.n]??i.def;
-       return dimFieldHTML(i.n,i.label,valFt,dimUnit,bind);
+       return dimFieldHTML(i.n,i.label,valFt,dimUnit,dimBind);
      }).join('')}
    </div>
    ${dividerInfo?`<div class="f4" style="margin-top:-4px">${dividerInfo}</div>`:''}
