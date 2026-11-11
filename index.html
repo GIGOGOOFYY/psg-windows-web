@@ -4804,11 +4804,15 @@ function calcWindow(w){
       const _dQtyS=Math.max(0,num(_dcatS&&_dcatS.dividerQty)||0);
       const _dDirS=((_dcatS&&_dcatS.dividerDir)||'none').toLowerCase();
       if(_dQtyS>0){
-        if(_dDirS==='vertical') addSec('Divider Section','Divider',OH*_dQtyS);
-        else if(_dDirS==='horizontal') addSec('Divider Section','Divider',OW*_dQtyS);
-        else if(_dDirS==='both'){ const _v=Math.floor(_dQtyS/2),_h=_dQtyS-_v;
-          if(_v>0) addSec('Divider Section','Divider',OH*_v);
-          if(_h>0) addSec('Divider Section (horizontal)','Divider',OW*_h); }
+        // One combined Divider Section line (vertical + horizontal rft summed), not two separate
+        // rows — a single divider part's total cut length on this window, same as every other
+        // section here is one line. Confirmed directly: PSG-T5W-98472 at these dims should read
+        // "Divider Section DG-23H · 7 rft" (4+3), not two separate 4rft/3rft lines.
+        let _divLen=0;
+        if(_dDirS==='vertical') _divLen=OH*_dQtyS;
+        else if(_dDirS==='horizontal') _divLen=OW*_dQtyS;
+        else if(_dDirS==='both'){ const _v=Math.floor(_dQtyS/2),_h=_dQtyS-_v; _divLen=OH*_v+OW*_h; }
+        if(_divLen>0) addSec('Divider Section','Divider',_divLen);
       }
     }
   } else {
