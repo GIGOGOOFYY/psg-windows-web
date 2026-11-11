@@ -4787,6 +4787,24 @@ function calcWindow(w){
     if(hasSection(series,'Interlock',_trackCnt)) addSec('Interlock Section','Interlock',SH*ilJoints);
     if(!isSlidingLike && hasSection(series,'Bidding')) addSec('Bidding Section','Bidding',per_open);
     if(w.netting && hasSection(series,'Net',_trackCnt)) addSec('Netting Section','Net',2*OH+nSh*SW);
+    // sliding+fixed: the catalogue's own Divider Qty/Direction (Catalogue editor) marks out the fixed
+    // portion next to the sliding shutters — e.g. PSG-T5W-98472 (Divider Qty 2, Direction Both). This
+    // was the original ask this session started with ("anything+fixed means there should be a divider
+    // ... fetched from Aluminum Profiles by System") and was missing because sliding+fixed never reached
+    // any divider-adding code at all (plain 'sliding' legitimately has none). The Divider part itself
+    // still comes from this window's own series via addSec→sysParts, same as every other section here.
+    if(wtype==='sliding+fixed'){
+      const _dcatS=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+      const _dQtyS=Math.max(0,num(_dcatS&&_dcatS.dividerQty)||0);
+      const _dDirS=((_dcatS&&_dcatS.dividerDir)||'none').toLowerCase();
+      if(_dQtyS>0){
+        if(_dDirS==='vertical') addSec('Divider Section','Divider',OH*_dQtyS);
+        else if(_dDirS==='horizontal') addSec('Divider Section','Divider',OW*_dQtyS);
+        else if(_dDirS==='both'){ const _v=Math.floor(_dQtyS/2),_h=_dQtyS-_v;
+          if(_v>0) addSec('Divider Section','Divider',OH*_v);
+          if(_h>0) addSec('Divider Section (horizontal)','Divider',OW*_h); }
+      }
+    }
   } else {
     // per-design formulas from the workbook design sheet
     const ds=designSections(w,series); dsSec=ds;
