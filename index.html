@@ -4605,7 +4605,18 @@ function sysParts(series){
   // in db from the start — this merge only needs to backfill a part number that's genuinely new to the
   // user's saved data (e.g. added to the catalog after their data was first saved).
   const dbKeys=new Set(db.map(p=>p.part));
-  const extra=seed.filter(p=>!dbKeys.has(p.part));
+  // Respect DB.rates.systemsDeleted — delSysPart() records a tombstone there when the user deliberately
+  // removes a built-in part from a system in Rates (e.g. an openable-only part like DG-51A that should
+  // never have been in a sliding system), and syncSeedParts() (which persists new SEED parts into the
+  // Rates table itself) already honours it. This live merge did not, so a part the user explicitly
+  // deleted — correctly absent from the Rates table on screen — kept reappearing as a selectable and,
+  // worse, sometimes the auto-picked (when no explicit choice was saved) option for pricing every
+  // window, silently inflating totals. Confirmed against real data: this was overpricing every
+  // PSG-W6R-66422 window by ~20%, because its Outer Section silently defaulted to the tombstoned DG-51A
+  // (an openable part) instead of a real MODERNA_SLIDING part.
+  const delKey=p=>p.part+'|'+(p.width||(p.widths&&p.widths[0])||'');
+  const deleted=new Set((DB.rates.systemsDeleted&&DB.rates.systemsDeleted[rs])||[]);
+  const extra=seed.filter(p=>!dbKeys.has(p.part) && !deleted.has(delKey(p)));
   return extra.length?[...db,...extra]:db;
 }
 // Matches a part's tagged sections against a requested section name. Handles two tagging styles that
