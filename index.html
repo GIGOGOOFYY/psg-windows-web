@@ -4240,6 +4240,7 @@ function load(){ let s=null; try{s=JSON.parse(localStorage.getItem(LS_KEY));}cat
   migrateDgSlidingTrack(s.rates);
   migrateDgSlidingRename(s.rates);
   migrateDgSlidingQuoteSeries(s.quotes);
+  migrateComboWtypeRevert(s.quotes, s.rates&&s.rates.catalogue);
   return s; }
 function saveCatImages(code,gif,img){
   try{ if(gif) localStorage.setItem('psg_cat_gif_'+code,gif); else localStorage.removeItem('psg_cat_gif_'+code); }catch(e){}
@@ -4418,6 +4419,33 @@ function migrateDgSlidingQuoteSeries(quotes){
   if(!quotes) return [];
   const changed=[];
   quotes.forEach(q=>{ let ch=false; (q.windows||[]).forEach(w=>{ if(w.series==='DG_SLIDING'){ w.series='MODERNA_SLIDING'; ch=true; } }); if(ch) changed.push(q); });
+  return changed;
+}
+// One-time cleanup: an earlier, since-reverted fix (and its one-time migration) permanently rewrote
+// w.wtype on every window whose catalogue code is a combo type, to match the catalogue's own combo
+// wtype (e.g. 'sliding' -> 'sliding+fixed'). That data change was already saved (and cloud-synced)
+// before the fix itself was reverted, so these windows were left stuck with a wtype the reverted code
+// no longer treats consistently — confirmed directly: a window stuck on 'sliding+fixed' was showing
+// BOTH 2-track and 3-track Outer Section options at once (the sliding-only track filter only applies
+// when wtype is exactly 'sliding') and was missing its Interlock Section entirely (added only inside
+// the wtype==='sliding' branch of calcWindow). Restores any such window's wtype back to exactly what
+// addWindow() would produce for it today — typeFor(category) — undoing that leftover data change.
+// Never touches a window whose wtype doesn't match its catalogue's own combo wtype, so a window that
+// still has today's plain addWindow()-assigned type (or was changed since) is left alone.
+function migrateComboWtypeRevert(quotes,catalogue){
+  if(!quotes||!catalogue) return [];
+  const byCode={}; catalogue.forEach(c=>{ if(c.code) byCode[c.code]=c; });
+  const changed=[];
+  quotes.forEach(q=>{ let ch=false;
+    (q.windows||[]).forEach(w=>{
+      if(!w.code) return;
+      const c=byCode[w.code];
+      if(!c||!c.wtype) return;
+      const orig=typeFor(c.category);
+      if(w.wtype===c.wtype && c.wtype!==orig){ w.wtype=orig; ch=true; }
+    });
+    if(ch) changed.push(q);
+  });
   return changed;
 }
 function brandsFor(series,lockType,wtype){
@@ -6788,7 +6816,9 @@ async function cloudPull(){ if(!SB){toast('Connect Supabase first');return;}
     // then push the affected quote(s) back up so the rename sticks in the cloud too.
     const _dgQChanged=migrateDgSlidingQuoteSeries(DB.quotes);
     await cloudPullRates(); await cloudPullCatImages(); _quotesCloudTs=Date.now(); save(); setCloudDot('on');
+    const _wtRevChanged=migrateComboWtypeRevert(DB.quotes, DB.rates.catalogue);
     for(const _q of _dgQChanged){ await cloudSaveQuote(_q); }
+    for(const _q of _wtRevChanged){ if(!_dgQChanged.includes(_q)) await cloudSaveQuote(_q); }
     toast('Pulled '+DB.quotes.length+' quotes + rates + images from cloud'); go('quotes'); }catch(e){ setCloudDot('err'); toast('Cloud pull failed — check keys/schema'); console.warn(e); } }
 async function cloudPushAll(){ if(!SB){toast('Connect Supabase first');return;} for(const q of DB.quotes){ await cloudSaveQuote(q);} await cloudSaveUsers(); await cloudSaveDevices(); await cloudSaveRates(); await cloudSaveCatImages(); toast('Pushed '+DB.quotes.length+' quotes + users/devices/rates + images to cloud'); }
 async function cloudSaveUsers(){ if(!SB)return; try{ await SB.from('psg_users').upsert(DB.users.map(u=>({username:u.username,password:u.password,role:u.role,views:u.views||[]}))); await cloudSavePerms();}catch(e){console.warn('users',e);} }
@@ -7133,8 +7163,10 @@ async function _checkQuotesSync(){
           windows:(byq[q.id]||[]).sort((a,b)=>a.position-b.position).map(winFromDB)}));
         let mx=1; DB.quotes.forEach(q=>{const m=/PSG-Q(\d+)/.exec(q.quoteNo||'');if(m)mx=Math.max(mx,+m[1]+1);}); DB.seq=mx;
         const _dgQChanged2=migrateDgSlidingQuoteSeries(DB.quotes);
+        const _wtRevChanged2=migrateComboWtypeRevert(DB.quotes, DB.rates.catalogue);
         _quotesCloudTs=ts; save();
         for(const _q of _dgQChanged2){ await cloudSaveQuote(_q); }
+        for(const _q of _wtRevChanged2){ if(!_dgQChanged2.includes(_q)) await cloudSaveQuote(_q); }
         toast('⟳ Quotes updated from cloud');
         if(document.querySelector('#view-quotes.active')) renderQuotes();
       }
