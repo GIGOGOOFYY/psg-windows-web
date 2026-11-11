@@ -5189,6 +5189,14 @@ function prodGroups(w){
       if(!expr){
         /* fallback for fixed windows with no outer formula: 2×OH + 2×OW */
         if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_pp=pickFor('Outer'),_odH=_pp?num(_pp.cutDedH??_pp.cutDed??0):0,_odW=_pp?num(_pp.cutDedW??_pp.cutDed??0):0; if(OH>0&&OW>0) g('Outer',_op,[{len:rup(OH*FT_MM)+_odH,cnt:2*qty},{len:rup(OW*FT_MM)+_odW,cnt:2*qty}]); }
+        // fallback for fixed windows with no bidding formula: glass perimeter = frame perimeter =
+        // 2×OH + 2×OW — same fallback designSections() applies (des.bidding===null && isFixedWin),
+        // which is why calcWindow()/the per-window editor already priced and showed this correctly
+        // (e.g. PSG-M2K-64190: "Bidding Section D41 · 21 rft"). prodGroups() read the raw, pre-fallback
+        // des.bidding (null here, since this code has no explicit bidding formula) and — unlike Outer —
+        // had no fallback branch for Bidding at all, so it silently dropped the whole section from the
+        // cut list / BOM table instead of falling through to this same frame-perimeter formula.
+        if(sec==='Bidding' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _bp=partOf('Bidding'),_pp3=pickFor('Bidding'),_bdH=_pp3?num(_pp3.cutDedH??_pp3.cutDed??0):0,_bdW=_pp3?num(_pp3.cutDedW??_pp3.cutDed??0):0; if(OH>0&&OW>0) g('Bidding',_bp,[{len:rup(OH*FT_MM)+_bdH,cnt:2*qty},{len:rup(OW*FT_MM)+_bdW,cnt:2*qty}]); }
         return;
       }
       const _secPart = partOf(sec);
