@@ -5637,7 +5637,16 @@ function pickPartFor(id,section,partName){
 }
 function addWindow(code){
   const q=curr(), cat=code?DB.rates.catalogue.find(c=>c.code===code):null;
-  const category=cat?cat.category:'Casement', wt=typeFor(category);
+  // Use the catalogue's own Window Type (cat.wtype) when it's set, not the broad Category field —
+  // category is just a display grouping (e.g. "Sliding") and can't tell a plain sliding window apart
+  // from a sliding+fixed combo (same category, different wtype); typeFor(category) can only ever
+  // return the base type, never a combo. An earlier version of this exact change was reverted this
+  // session because calcWindow() didn't yet have a correct code path for 'sliding+fixed' — every
+  // window that got flipped to it broke (shutter calc, track filter, interlock). That gap is now
+  // fixed (calcWindow/dimsOf/prodGroups treat sliding+fixed as sliding for all of that, plus the new
+  // catalogue-driven Divider section), so this is safe to re-enable. Unlike before, this ONLY changes
+  // what a NEWLY added window gets — no migration, no existing quote data touched.
+  const category=cat?cat.category:'Casement', wt=(cat&&cat.wtype)?cat.wtype:typeFor(category);
   const series=(seriesFor(wt,'NO')[1]||seriesFor(wt,'NO')[0]||'');
   const des=(code&&SEED.designs[code])||SEED.defaultDesign; const dim={}; des.inputs.forEach(i=>dim[i.n]=i.def);
   // NOTE: fCols/fRows (Mullions/Transoms) are NOT carried over from the catalogue's Divider Qty/
