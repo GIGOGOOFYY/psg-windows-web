@@ -152,6 +152,8 @@
   .dimgrp{gap:8px!important}
   .dimgrp .dimpart{-moz-appearance:textfield}
   .dimgrp .dimpart::-webkit-outer-spin-button,.dimgrp .dimpart::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .gded{-moz-appearance:textfield}
+  .gded::-webkit-outer-spin-button,.gded::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 </style>
 <style id="psg-custom-theme"></style>
 </head>
@@ -5299,6 +5301,90 @@ function glassOf(w){
     areaSft:areaSftPer*qty,   // total across all windows (for BOM/glass schedule)
     areaSftPer,               // per single window (for calcWindow pricing)
     spacerRft:dbl?+(2*(paneW+paneH)*units).toFixed(2):0}; }
+/* Combo window (Casement+Fixed / Awning+Fixed) glass-piece split for the Glass Schedule only — splits
+   the single lumped pane glassOf() returns into its real physical pieces: Shutter, Fixed (the full-
+   height column sitting beside/between the shutter(s) — "F1"), and Divider (the small piece directly
+   under/over each shutter — "F2"). Named to match the app's own existing "Fixed Height/Width (H1/W1)"
+   and "Divider Height/Width (a/b)" catalogue-design fields (Rates/Catalogue → each code's design
+   already computes these; see resolveG/getDesign) rather than re-deriving geometry here, so production
+   sees the same words everywhere. Does NOT touch prodGroups/calcCutPlan/bomOf or any aluminium cut-
+   list/pricing — those read w directly and are completely unaffected; this only changes which pane
+   sizes show on the Glass Schedule (BOM/Print), same as glassOf() already did for the lumped case.
+   sliding+fixed is NOT split here yet (its real piece geometry hasn't been confirmed) — it still
+   returns the old single lumped Shutter-sized entry via glassOf(), exactly as before. */
+function glassPiecesOf(w){
+  const wtype=w.wtype||'casement';
+  const qty=num(w.qty)||1;
+  const dbl=w.glazing==='Double', panesPer=dbl?2:1;
+  const isSplit=wtype==='casement+fixed'||wtype==='awning+fixed';
+  if(!isSplit){
+    const g=glassOf(w);
+    return [{role:(wtype==='fixed'?'Fixed':'Shutter'),label:g.label,glazing:g.glazing,unitThk:g.unitThk,
+      outer:g.outer,outerThk:g.outerThk,inner:g.inner,innerThk:g.innerThk,spacer:g.spacer,
+      paneW:g.paneW,paneH:g.paneH,units:g.units,panes:g.panes,areaSft:g.areaSft,areaSftPer:g.areaSftPer,
+      spacerRft:g.spacerRft}];
+  }
+  const {des,g:gg}=resolveG(w,w.series);
+  const findN=re=>{ const d=(des.derived||[]).find(d=>re.test(d.label))||(des.inputs||[]).find(d=>re.test(d.label)); return d?d.n:null; };
+  const nOH=findN(/^Opening Height/i), nOW=findN(/^Opening Width/i);
+  const nSH=findN(/^Shutter Height/i), nSW=findN(/^Shutter Width/i);
+  const nH1=findN(/^Fixed Height/i), nW1=findN(/^Fixed Width/i);
+  const nA=findN(/^Divider Height/i), nB=findN(/^Divider Width/i);
+  const OH=num(gg[nOH]),OW=num(gg[nOW]),SH=num(gg[nSH]),SW=num(gg[nSW]);
+  const glassThkMm=dbl?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
+  function dedOf(sec){
+    const part=pickPart(w.series,sec,w.width,(w.picks||{})[sec],w.glazing,glassThkMm,null);
+    return {L:part?num(part.glassDedL||0):0,R:part?num(part.glassDedR||0):0,
+            T:part?num(part.glassDedT||0):0,B:part?num(part.glassDedB||0):0};
+  }
+  function mkPiece(role,wFt,hFt,unitsEach,ded){
+    const paneW=Math.max(0,wFt-(ded.L+ded.R)/FT_MM), paneH=Math.max(0,hFt-(ded.T+ded.B)/FT_MM);
+    const unitsTotal=unitsEach*qty;
+    const areaSftPer=+(wFt*hFt*panesPer*unitsEach).toFixed(2);
+    return {role,label:glassLabel(w)+' ('+role+')',glazing:w.glazing||'Single',unitThk:dbl?unitThk(w):null,
+      outer:w.glassOuter||'Clear',outerThk:dbl?(w.glassOuterThk||''):(w.glassThk||''),
+      inner:dbl?(w.glassInner||'Clear'):null,innerThk:dbl?(w.glassInnerThk||''):null,spacer:w.spacer||'',
+      paneW,paneH,units:unitsTotal,panes:unitsTotal*panesPer,
+      areaSft:+(areaSftPer*qty).toFixed(2),areaSftPer,
+      spacerRft:dbl?+(2*(paneW+paneH)*unitsTotal).toFixed(2):0}; }
+  const shutterDed=dedOf('Shutter'), outerDed=dedOf('Outer'), dividerDed=dedOf('Divider');
+  const hasFixed=nH1!=null&&nW1!=null&&num(gg[nH1])>0.002&&num(gg[nW1])>0.002;
+  const hasDivider=nA!=null&&nB!=null&&num(gg[nA])>0.002&&num(gg[nB])>0.002;
+  // nSh: how many real shutter columns the design implies. For the vertical-column Fixed case this is
+  // always exactly k (how many shutter-widths the design's own Fixed Width(W1) formula subtracted from
+  // OW) — deriving it this way, rather than trusting w.nShutters, keeps the pieces' total area equal to
+  // OH*OW (the window's actual priced area) even when a window's nShutters was left at the catalogue's
+  // default and never corrected (already flagged elsewhere as sometimes stale). Every other case falls
+  // back to w.nShutters as before.
+  let nSh=Math.max(1,num(w.nShutters)||1), isVerticalCol=false, k=1;
+  if(hasFixed){
+    const W1=num(gg[nW1]), H1=num(gg[nH1]);
+    isVerticalCol=Math.abs(H1-OH)<0.01; // full height → side/middle column; else a full-width horizontal strip
+    if(isVerticalCol && SW>0.0001){ const kRaw=Math.round((OW-W1)/SW); if(kRaw>=1) k=kRaw; }
+    if(isVerticalCol) nSh=k;
+  }
+  const pieces=[mkPiece('Shutter',SW,SH,nSh,shutterDed)];
+  if(hasFixed){
+    const W1=num(gg[nW1]), H1=num(gg[nH1]);
+    let fixedDed;
+    if(isVerticalCol){
+      // k = how many shutter-widths were subtracted from OW to get W1: 1 = side column (one vertical
+      // edge touches a shutter), 2+ = middle column (both vertical edges touch a shutter) — read
+      // straight off the catalogue design's own Fixed Width(W1) formula, no new field needed.
+      fixedDed = k>=2 ? {L:dividerDed.L,R:dividerDed.R,T:outerDed.T,B:outerDed.B}
+                       : {L:dividerDed.L,R:outerDed.R,T:outerDed.T,B:outerDed.B};
+    } else {
+      fixedDed = {L:outerDed.L,R:outerDed.R,T:dividerDed.T,B:outerDed.B};
+    }
+    pieces.push(mkPiece('Fixed',W1,H1,1,fixedDed));
+  }
+  if(hasDivider){
+    const A=num(gg[nA]), B=num(gg[nB]); // a=height (OH-SH), b=width (SW) — this piece sits directly under/over its own shutter
+    const dividerPieceDed={L:outerDed.L,R:outerDed.R,T:dividerDed.T,B:outerDed.B};
+    pieces.push(mkPiece('Divider',B,A,nSh,dividerPieceDed));
+  }
+  return pieces;
+}
 /* hardware BOM lines for production (materials, with units) */
 function bomOf(w){ return calcWindow(w).hw.filter(h=>h.label!=='Labor' && !/^Glass — |^Spacer — /.test(h.label)).map(h=>({item:h.label,qty:+(Math.round(h.qty*100)/100),unit:h.unit})); }
 
@@ -5350,13 +5436,13 @@ function calcBOM(q){
   (q.windows||[]).forEach(w=>{ const wq=num(w.qty)||1; bomOf(w).forEach(b=>{ const k=b.item+'|'+b.unit; hw[k]=(hw[k]||0)+b.qty*wq; }); });
   const hwRows=Object.entries(hw).map(([k,v])=>{ const [item,unit]=k.split('|'); return {item,unit,qty:Math.round(v*100)/100}; });
   const glMap={};
-  (q.windows||[]).forEach(w=>{ const g=glassOf(w);
-    const key=g.label+'|'+g.paneW+'|'+g.paneH;
+  (q.windows||[]).forEach(w=>{ glassPiecesOf(w).forEach(g=>{
+    const key=g.role+'|'+g.label+'|'+g.paneW+'|'+g.paneH;
     if(!glMap[key]) glMap[key]={...g,totalUnits:0,totalSpacer:0,totalSqft:0};
     glMap[key].totalUnits+=g.units;
     glMap[key].totalSqft=+(glMap[key].totalSqft+g.areaSft).toFixed(2);
     glMap[key].totalSpacer=+(glMap[key].totalSpacer+(g.spacerRft||0)).toFixed(2);
-  });
+  }); });
   const glassRows=Object.values(glMap);
   const totalGlassSqft=+glassRows.reduce((s,g)=>s+g.totalSqft,0).toFixed(2);
   return {aluRows,hwRows,glassRows,totalBars:aluRows.reduce((s,r)=>s+r.bars,0),totalGlassSqft};
@@ -6279,7 +6365,7 @@ function renderSysTable(){
       <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${sysWidths.map(w=>w.replace('mm','')).join(' / ')}</span></th>
       <th style="min-width:62px;text-align:right" title="Height member cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Height</span></th>
       <th style="min-width:62px;text-align:right" title="Width member (bottom/top) cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Width</span></th>
-      <th style="min-width:148px;text-align:center" title="How much smaller the glass pane is cut than the opening this profile holds it in, per side (mm). 0 = no deduction (glass sized to the raw opening, same as before this existed). Only affects the glass size shown/ordered on the Glass Schedule (and, for Double glazing, the spacer length priced from that same size) — never the aluminium cut list or the window's own sell price.">Glass Ded (mm)<br><span style="font-weight:400;font-size:10px">L / R / T / B</span></th>
+      <th style="min-width:160px;text-align:center" title="How much smaller the glass pane is cut than the opening this profile holds it in, per side (mm). 0 = no deduction (glass sized to the raw opening, same as before this existed). Only affects the glass size shown/ordered on the Glass Schedule (and, for Double glazing, the spacer length priced from that same size) — never the aluminium cut list or the window's own sell price.">Glass Ded (mm)<br><span style="font-weight:400;font-size:10px">L / R / T / B</span></th>
       <th style="min-width:58px;text-align:center" title="Track/shutter count this part is restricted to (e.g. DG-26=2, DG-26P=3) — only matters for Sliding series. A part with no track set applies to any shutter count, same as before this existed.">Track<br><span style="font-weight:400;font-size:10px">(sliding)</span></th>
       <th style="min-width:340px">Sections Used</th>
       ${fins.map(f=>`<th class="right" style="min-width:72px">${f}</th>`).join('')}
@@ -6291,12 +6377,16 @@ function renderSysTable(){
         <div style="display:flex;gap:6px;justify-content:center">${widthCks(p,i)}</div></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedH??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedH',+this.value)"></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedW??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedW',+this.value)"></td>
-      <td style="white-space:nowrap;padding:4px 6px">
-        <div style="display:flex;gap:3px;justify-content:center;align-items:center">
-          <input type="number" title="Left" style="width:32px;text-align:right" value="${p.glassDedL??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedL',+this.value)">
-          <input type="number" title="Right" style="width:32px;text-align:right" value="${p.glassDedR??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedR',+this.value)">
-          <input type="number" title="Top" style="width:32px;text-align:right" value="${p.glassDedT??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedT',+this.value)">
-          <input type="number" title="Bottom" style="width:32px;text-align:right" value="${p.glassDedB??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedB',+this.value)">
+      <td style="padding:4px 6px">
+        <div style="display:grid;grid-template-columns:14px 44px 14px 44px;gap:4px 5px;align-items:center;justify-content:center">
+          <span style="font-size:10px;color:var(--muted,#888);text-align:right" title="Left">L</span>
+          <input class="gded" type="number" title="Left" style="width:44px;text-align:right;padding:2px 4px;font-size:12px" value="${p.glassDedL??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedL',+this.value)">
+          <span style="font-size:10px;color:var(--muted,#888);text-align:right" title="Right">R</span>
+          <input class="gded" type="number" title="Right" style="width:44px;text-align:right;padding:2px 4px;font-size:12px" value="${p.glassDedR??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedR',+this.value)">
+          <span style="font-size:10px;color:var(--muted,#888);text-align:right" title="Top">T</span>
+          <input class="gded" type="number" title="Top" style="width:44px;text-align:right;padding:2px 4px;font-size:12px" value="${p.glassDedT??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedT',+this.value)">
+          <span style="font-size:10px;color:var(--muted,#888);text-align:right" title="Bottom">B</span>
+          <input class="gded" type="number" title="Bottom" style="width:44px;text-align:right;padding:2px 4px;font-size:12px" value="${p.glassDedB??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedB',+this.value)">
         </div></td>
       <td class="right"><input type="number" min="1" style="width:50px;text-align:right" placeholder="All" title="Blank = applies to any shutter count" value="${p.track??''}" onchange="setSysPartField('${jsq(sys)}',${i},'track',this.value?+this.value:null)"></td>
       <td style="min-width:340px">${secCks(p,i)}</td>
@@ -6774,15 +6864,16 @@ function doPrint(id,mode){
     // Build oblique-grouped glass schedule
     const glOblMap={};
     (q.windows||[]).forEach((w,i)=>{
-      const g=glassOf(w);
-      const wMm=Math.round(g.paneW*304.8),hMm=Math.round(g.paneH*304.8);
-      const sizeKey=g.label+'|'+wMm+'x'+hMm+(g.spacer?'|'+g.spacer:'');
-      if(!glOblMap[sizeKey]) glOblMap[sizeKey]={label:g.label,wMm,hMm,panes:0,areaSft:0,spacer:g.spacer||'',spacerRft:0,windows:[]};
-      const entry=glOblMap[sizeKey];
-      entry.panes+=g.panes; entry.areaSft=+(entry.areaSft+g.areaSft).toFixed(2);
-      if(g.spacerRft) entry.spacerRft=+(entry.spacerRft+g.spacerRft).toFixed(2);
-      const wCode='/'+String(i+1).padStart(2,'0');
-      entry.windows.push(wCode);
+      glassPiecesOf(w).forEach(g=>{
+        const wMm=Math.round(g.paneW*304.8),hMm=Math.round(g.paneH*304.8);
+        const sizeKey=g.role+'|'+g.label+'|'+wMm+'x'+hMm+(g.spacer?'|'+g.spacer:'');
+        if(!glOblMap[sizeKey]) glOblMap[sizeKey]={label:g.label,wMm,hMm,panes:0,areaSft:0,spacer:g.spacer||'',spacerRft:0,windows:[]};
+        const entry=glOblMap[sizeKey];
+        entry.panes+=g.panes; entry.areaSft=+(entry.areaSft+g.areaSft).toFixed(2);
+        if(g.spacerRft) entry.spacerRft=+(entry.spacerRft+g.spacerRft).toFixed(2);
+        const wCode='/'+String(i+1).padStart(2,'0');
+        if(!entry.windows.includes(wCode)) entry.windows.push(wCode);
+      });
     });
     const glOblRows=Object.values(glOblMap);
     body+=`<div class="pw">
