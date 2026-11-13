@@ -5278,13 +5278,27 @@ function glassOf(w){
   const dbl_=dbl; // already declared above
   // areaSft = per single window (used by calcWindow for pricing — display multiplies by qty)
   const areaSftPer=areaSftPerVal;
+  // Glass cut size: the pane actually ordered/cut is smaller than the shutter/opening it sits in, by a
+  // per-side amount (mm) that belongs to whichever profile physically holds the glass — editable per
+  // part in Rates → Systems (Glass Ded L/R/T/B), 0 by default so this is a no-op until a profile's own
+  // numbers are filled in. Fixed has no shutter, so the glass sits straight in the Outer frame; every
+  // other type (Casement, Awning, Sliding, and the operable side of a Combo) holds its glass in the
+  // Shutter. This only changes the displayed/ordered pane size (paneW/paneH) and, for Double glazing,
+  // the spacer length priced from that same size (more accurate — spacer runs around the actual glass
+  // edge, not the raw opening) — areaSft/areaSftPer above (the window's own sell price) are untouched.
+  const _glassSec = wtype==='fixed' ? 'Outer' : 'Shutter';
+  const _glassTrackCnt = (wtype==='sliding'||wtype==='sliding+fixed') ? (num(w.nShutters)||2) : null;
+  const _glassPart = pickPart(w.series,_glassSec,w.width,(w.picks||{})[_glassSec],w.glazing,dbl?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk),_glassTrackCnt);
+  const _gdL=_glassPart?num(_glassPart.glassDedL||0):0, _gdR=_glassPart?num(_glassPart.glassDedR||0):0,
+        _gdT=_glassPart?num(_glassPart.glassDedT||0):0, _gdB=_glassPart?num(_glassPart.glassDedB||0):0;
+  const paneW=Math.max(0,SW-(_gdL+_gdR)/FT_MM), paneH=Math.max(0,SH-(_gdT+_gdB)/FT_MM);
   return {label:glassLabel(w),glazing:w.glazing||'Single',unitThk:dbl?unitThk(w):null,
     outer:w.glassOuter||'Clear',outerThk:dbl?(w.glassOuterThk||''):(w.glassThk||''),
     inner:dbl?(w.glassInner||'Clear'):null,innerThk:dbl?(w.glassInnerThk||''):null,spacer:w.spacer||'',
-    paneW:SW,paneH:SH,units,panes:units*panesPer,
+    paneW,paneH,units,panes:units*panesPer,
     areaSft:areaSftPer*qty,   // total across all windows (for BOM/glass schedule)
     areaSftPer,               // per single window (for calcWindow pricing)
-    spacerRft:dbl?+(2*(SW+SH)*units).toFixed(2):0}; }
+    spacerRft:dbl?+(2*(paneW+paneH)*units).toFixed(2):0}; }
 /* hardware BOM lines for production (materials, with units) */
 function bomOf(w){ return calcWindow(w).hw.filter(h=>h.label!=='Labor' && !/^Glass — |^Spacer — /.test(h.label)).map(h=>({item:h.label,qty:+(Math.round(h.qty*100)/100),unit:h.unit})); }
 
@@ -6265,6 +6279,7 @@ function renderSysTable(){
       <th style="text-align:center">Width<br><span style="font-weight:400;font-size:10px">${sysWidths.map(w=>w.replace('mm','')).join(' / ')}</span></th>
       <th style="min-width:62px;text-align:right" title="Height member cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Height</span></th>
       <th style="min-width:62px;text-align:right" title="Width member (bottom/top) cut adj (+mm / -mm)">Cut Adj<br><span style="font-weight:400;font-size:10px">Width</span></th>
+      <th style="min-width:148px;text-align:center" title="How much smaller the glass pane is cut than the opening this profile holds it in, per side (mm). 0 = no deduction (glass sized to the raw opening, same as before this existed). Only affects the glass size shown/ordered on the Glass Schedule (and, for Double glazing, the spacer length priced from that same size) — never the aluminium cut list or the window's own sell price.">Glass Ded (mm)<br><span style="font-weight:400;font-size:10px">L / R / T / B</span></th>
       <th style="min-width:58px;text-align:center" title="Track/shutter count this part is restricted to (e.g. DG-26=2, DG-26P=3) — only matters for Sliding series. A part with no track set applies to any shutter count, same as before this existed.">Track<br><span style="font-weight:400;font-size:10px">(sliding)</span></th>
       <th style="min-width:340px">Sections Used</th>
       ${fins.map(f=>`<th class="right" style="min-width:72px">${f}</th>`).join('')}
@@ -6276,6 +6291,13 @@ function renderSysTable(){
         <div style="display:flex;gap:6px;justify-content:center">${widthCks(p,i)}</div></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedH??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedH',+this.value)"></td>
       <td class="right"><input type="number" style="width:60px;text-align:right" value="${p.cutDedW??0}" onchange="setSysPartField('${jsq(sys)}',${i},'cutDedW',+this.value)"></td>
+      <td style="white-space:nowrap;padding:4px 6px">
+        <div style="display:flex;gap:3px;justify-content:center;align-items:center">
+          <input type="number" title="Left" style="width:32px;text-align:right" value="${p.glassDedL??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedL',+this.value)">
+          <input type="number" title="Right" style="width:32px;text-align:right" value="${p.glassDedR??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedR',+this.value)">
+          <input type="number" title="Top" style="width:32px;text-align:right" value="${p.glassDedT??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedT',+this.value)">
+          <input type="number" title="Bottom" style="width:32px;text-align:right" value="${p.glassDedB??0}" onchange="setSysPartField('${jsq(sys)}',${i},'glassDedB',+this.value)">
+        </div></td>
       <td class="right"><input type="number" min="1" style="width:50px;text-align:right" placeholder="All" title="Blank = applies to any shutter count" value="${p.track??''}" onchange="setSysPartField('${jsq(sys)}',${i},'track',this.value?+this.value:null)"></td>
       <td style="min-width:340px">${secCks(p,i)}</td>
       ${fins.map(f=>`<td class="right"><input style="width:72px;text-align:right" type="number" value="${p.rates[f]??''}" placeholder="—" onchange="setPartRate('${jsq(sys)}',${i},'${f}',this.value)"></td>`).join('')}
@@ -6300,7 +6322,7 @@ function toggleSysWidth(sys,i,w,checked){
 }
 function setSysPartField(sys,i,field,v){
   const p=DB.rates.systems[sys][i];
-  if(field==='cutDedH'||field==='cutDedW'||field==='glassMin'||field==='glassMax'||field==='track'){
+  if(field==='cutDedH'||field==='cutDedW'||field==='glassDedL'||field==='glassDedR'||field==='glassDedT'||field==='glassDedB'||field==='glassMin'||field==='glassMax'||field==='track'){
     if(v===null||v===''||v===undefined) delete p[field]; else p[field]=+v;
   } else p[field]=(typeof v==='string'?v.trim():v);
   save(); toast('Saved');
