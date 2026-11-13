@@ -5099,6 +5099,16 @@ function prodGroups(w){
   if(w._frozen && w._frozen.prod) return w._frozen.prod;
   const qty=num(w.qty)||1, rup=x=>Math.ceil(x), groups=[], series=w.series;
   const g=(name,part,pieces)=>{ const pf=pieces.filter(p=>p.len>0&&p.cnt>0); if(pf.length) groups.push({name,part,pieces:pf}); };
+  // Per-piece production labels (cut-list tagging): each physical piece of a section gets its own
+  // instance tag (H1/H2.../W1/W2... for whole-window sections, S{shutter}H{n}/S{shutter}W{n} for
+  // per-shutter sliding sections) instead of the old plain window-ordinal label, so the floor can tell
+  // apart two pieces of the same window on the same bar. _nextTag's counter is keyed by (scope,role) so
+  // unrelated sections never share a counter; gT() is the tagged equivalent of g() for a single
+  // {len,cnt} entry. Catalogue-grid-driven Divider/Bidding overrides and generic custom-formula
+  // (sectionPieces) pieces are NOT yet tagged — they keep the old plain label (deliberately deferred).
+  const _tagCounters={};
+  const _nextTag=(scope,prefix,role)=>{ const k=scope+'|'+role; _tagCounters[k]=(_tagCounters[k]||0)+1; return prefix+role+_tagCounters[k]; };
+  const gT=(name,part,len,cnt,scope,prefix,role)=>{ if(!(len>0&&cnt>0)) return; const tags=[]; for(let i=0;i<cnt;i++) tags.push(_nextTag(scope,prefix,role)); g(name,part,[{len,cnt,tags}]); };
   /* pickFor: returns the actual part row selected for a section (carries .cutDed from DB row) */
   const _glaz=w.glazing||'Single', _dblG=_glaz==='Double';
   const _gThkMm=_dblG?Math.round(mmOf(w.glassOuterThk)+mmOf(w.spacer)+mmOf(w.glassInnerThk)):mmOf(w.glassThk);
@@ -5116,31 +5126,50 @@ function prodGroups(w){
     const _dedW=(sec)=>{ const p=pickFor(sec); return p?num(p.cutDedW??p.cutDed??0):0; };
     const _cutH=(dimFt,sec)=>rup(dimFt*FT_MM)+_dedH(sec);
     const _cutW=(dimFt,sec)=>rup(dimFt*FT_MM)+_dedW(sec);
-    // Outer frame cuts
-    if(hasSection(series,'Outer Bottom',_trackCnt)) g('Outer Bottom',partOf('Outer Bottom'),[{len:_cutW(OW,'Outer Bottom'),cnt:1*qty}]);
-    if(hasSection(series,'Outer Top',_trackCnt))    g('Outer Top',   partOf('Outer Top'),   [{len:_cutW(OW,'Outer Top'),   cnt:1*qty}]);
-    if(hasSection(series,'Outer Height',_trackCnt)) g('Outer Height',partOf('Outer Height'),[{len:_cutH(OH,'Outer Height'),cnt:2*qty}]);
-    // Shutter cuts
-    if(hasSection(series,'Shutter Bottom',_trackCnt)) g('Shutter Bottom',partOf('Shutter Bottom'),[{len:_cutW(SW,'Shutter Bottom'),cnt:nSh*qty}]);
-    if(hasSection(series,'Shutter Top',_trackCnt))    g('Shutter Top',   partOf('Shutter Top'),   [{len:_cutW(SW,'Shutter Top'),   cnt:nSh*qty}]);
+    // Outer frame cuts — whole-window section: O-prefix, shared W counter for Bottom+Top, own H counter for Height
+    if(hasSection(series,'Outer Bottom',_trackCnt)) gT('Outer Bottom',partOf('Outer Bottom'),_cutW(OW,'Outer Bottom'),1*qty,'sl-Outer','O','W');
+    if(hasSection(series,'Outer Top',_trackCnt))    gT('Outer Top',   partOf('Outer Top'),   _cutW(OW,'Outer Top'),   1*qty,'sl-Outer','O','W');
+    if(hasSection(series,'Outer Height',_trackCnt)) gT('Outer Height',partOf('Outer Height'),_cutH(OH,'Outer Height'),2*qty,'sl-Outer','O','H');
+    // Shutter cuts — per-shutter section: S{shutter}-prefix, instance counter shared across Bottom+Top (W role)
+    // and independently across Height (H role), scoped per shutter number so each shutter's own pieces count 1,2,...
+    if(hasSection(series,'Shutter Bottom',_trackCnt)){
+      const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) tags.push(_nextTag('sh'+s,'S'+s,'W'));
+      const len=_cutW(SW,'Shutter Bottom'); if(len>0&&tags.length) g('Shutter Bottom',partOf('Shutter Bottom'),[{len,cnt:tags.length,tags}]);
+    }
+    if(hasSection(series,'Shutter Top',_trackCnt)){
+      const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) tags.push(_nextTag('sh'+s,'S'+s,'W'));
+      const len=_cutW(SW,'Shutter Top'); if(len>0&&tags.length) g('Shutter Top',partOf('Shutter Top'),[{len,cnt:tags.length,tags}]);
+    }
     // 2 height members per shutter (left + right side) — piece length stays SH, count doubles, matching
     // the same fix in calcWindow() so the cut list matches what the BOM actually priced.
-    if(hasSection(series,'Shutter Height',_trackCnt)) g('Shutter Height',partOf('Shutter Height'),[{len:_cutH(SH,'Shutter Height'),cnt:2*nSh*qty}]);
-    // Bidding cuts
-    if(hasSection(series,'Bidding Bottom',_trackCnt)) g('Bidding Bottom',partOf('Bidding Bottom'),[{len:_cutW(OW,'Bidding Bottom'),cnt:1*qty}]);
-    if(hasSection(series,'Bidding Top',_trackCnt))    g('Bidding Top',   partOf('Bidding Top'),   [{len:_cutW(OW,'Bidding Top'),   cnt:1*qty}]);
-    if(hasSection(series,'Bidding Height',_trackCnt)) g('Bidding Height',partOf('Bidding Height'),[{len:_cutH(OH,'Bidding Height'),cnt:2*qty}]);
+    if(hasSection(series,'Shutter Height',_trackCnt)){
+      const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) for(let k=0;k<2;k++) tags.push(_nextTag('sh'+s,'S'+s,'H'));
+      const len=_cutH(SH,'Shutter Height'); if(len>0&&tags.length) g('Shutter Height',partOf('Shutter Height'),[{len,cnt:tags.length,tags}]);
+    }
+    // Bidding cuts — whole-window section, same O-prefix scheme as Outer but its own counter namespace
+    if(hasSection(series,'Bidding Bottom',_trackCnt)) gT('Bidding Bottom',partOf('Bidding Bottom'),_cutW(OW,'Bidding Bottom'),1*qty,'sl-Bidding','O','W');
+    if(hasSection(series,'Bidding Top',_trackCnt))    gT('Bidding Top',   partOf('Bidding Top'),   _cutW(OW,'Bidding Top'),   1*qty,'sl-Bidding','O','W');
+    if(hasSection(series,'Bidding Height',_trackCnt)) gT('Bidding Height',partOf('Bidding Height'),_cutH(OH,'Bidding Height'),2*qty,'sl-Bidding','O','H');
     // Same joint-count fix as calcWindow(): nSh-1 joints, not nSh, and no "double interlock" multiplier
     // (removed — confirmed-correct values for PSG-BGE-73948 are the plain, undoubled amount).
-    if(hasSection(series,'Interlock',_trackCnt)) g('Interlock',partOf('Interlock'),[{len:rup(SH*FT_MM),cnt:Math.max(0,nSh-1)*qty}]);
+    if(hasSection(series,'Interlock',_trackCnt)) gT('Interlock',partOf('Interlock'),rup(SH*FT_MM),Math.max(0,nSh-1)*qty,'sl-Interlock','O','H');
     // Net cuts
     if(w.netting){
-      if(hasSection(series,'Net Top',_trackCnt))    g('Net Top',   partOf('Net Top'),   [{len:_cutW(SW,'Net Top'),   cnt:nSh*qty}]);
-      if(hasSection(series,'Net Bottom',_trackCnt)) g('Net Bottom',partOf('Net Bottom'),[{len:_cutW(SW,'Net Bottom'),cnt:nSh*qty}]);
-      if(hasSection(series,'Net Height',_trackCnt)) g('Net Height',partOf('Net Height'),[{len:_cutH(OH,'Net Height'),cnt:2*qty}]);
+      if(hasSection(series,'Net Top',_trackCnt)){
+        const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) tags.push(_nextTag('net-sh'+s,'S'+s,'W'));
+        const len=_cutW(SW,'Net Top'); if(len>0&&tags.length) g('Net Top',partOf('Net Top'),[{len,cnt:tags.length,tags}]);
+      }
+      if(hasSection(series,'Net Bottom',_trackCnt)){
+        const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) tags.push(_nextTag('net-sh'+s,'S'+s,'W'));
+        const len=_cutW(SW,'Net Bottom'); if(len>0&&tags.length) g('Net Bottom',partOf('Net Bottom'),[{len,cnt:tags.length,tags}]);
+      }
+      if(hasSection(series,'Net Height',_trackCnt)) gT('Net Height',partOf('Net Height'),_cutH(OH,'Net Height'),2*qty,'sl-NetH','O','H');
       // fallback: old 'Net' section
-      if(!hasSection(series,'Net Top',_trackCnt)&&!hasSection(series,'Net Bottom',_trackCnt)&&hasSection(series,'Net',_trackCnt))
-        g('Netting',partOf('Net'),[{len:_cutH(OH,'Net'),cnt:2*qty},{len:_cutW(SW,'Net'),cnt:nSh*qty}]);
+      if(!hasSection(series,'Net Top',_trackCnt)&&!hasSection(series,'Net Bottom',_trackCnt)&&hasSection(series,'Net',_trackCnt)){
+        gT('Netting',partOf('Net'),_cutH(OH,'Net'),2*qty,'sl-NetH','O','H');
+        const tags=[]; for(let r=0;r<qty;r++) for(let s=1;s<=nSh;s++) tags.push(_nextTag('net-sh'+s,'S'+s,'W'));
+        const len=_cutW(SW,'Net'); if(len>0&&tags.length) g('Netting',partOf('Net'),[{len,cnt:tags.length,tags}]);
+      }
     }
   } else {
     const {g:gv,des}=resolveG(w,series);
@@ -5190,8 +5219,10 @@ function prodGroups(w){
         return;
       }
       if(!expr){
-        /* fallback for fixed windows with no outer formula: 2×OH + 2×OW */
-        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_pp=pickFor('Outer'),_odH=_pp?num(_pp.cutDedH??_pp.cutDed??0):0,_odW=_pp?num(_pp.cutDedW??_pp.cutDed??0):0; if(OH>0&&OW>0) g('Outer',_op,[{len:rup(OH*FT_MM)+_odH,cnt:2*qty},{len:rup(OW*FT_MM)+_odW,cnt:2*qty}]); }
+        /* fallback for fixed windows with no outer formula: 2×OH + 2×OW. Tagged: each section's own
+           H1/H2 (height pair) and W1/W2 (width pair), counter independent per section (own scope). */
+        if(sec==='Outer' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _op=partOf('Outer'),_pp=pickFor('Outer'),_odH=_pp?num(_pp.cutDedH??_pp.cutDed??0):0,_odW=_pp?num(_pp.cutDedW??_pp.cutDed??0):0;
+          if(OH>0&&OW>0){ gT('Outer',_op,rup(OH*FT_MM)+_odH,2*qty,'ns-Outer','','H'); gT('Outer',_op,rup(OW*FT_MM)+_odW,2*qty,'ns-Outer','','W'); } }
         // fallback for fixed windows with no bidding formula: glass perimeter = frame perimeter =
         // 2×OH + 2×OW — same fallback designSections() applies (des.bidding===null && isFixedWin),
         // which is why calcWindow()/the per-window editor already priced and showed this correctly
@@ -5199,7 +5230,8 @@ function prodGroups(w){
         // des.bidding (null here, since this code has no explicit bidding formula) and — unlike Outer —
         // had no fallback branch for Bidding at all, so it silently dropped the whole section from the
         // cut list / BOM table instead of falling through to this same frame-perimeter formula.
-        if(sec==='Bidding' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _bp=partOf('Bidding'),_pp3=pickFor('Bidding'),_bdH=_pp3?num(_pp3.cutDedH??_pp3.cutDed??0):0,_bdW=_pp3?num(_pp3.cutDedW??_pp3.cutDed??0):0; if(OH>0&&OW>0) g('Bidding',_bp,[{len:rup(OH*FT_MM)+_bdH,cnt:2*qty},{len:rup(OW*FT_MM)+_bdW,cnt:2*qty}]); }
+        if(sec==='Bidding' && isFixed){ const OH=num(gv[4]),OW=num(gv[5]); const _bp=partOf('Bidding'),_pp3=pickFor('Bidding'),_bdH=_pp3?num(_pp3.cutDedH??_pp3.cutDed??0):0,_bdW=_pp3?num(_pp3.cutDedW??_pp3.cutDed??0):0;
+          if(OH>0&&OW>0){ gT('Bidding',_bp,rup(OH*FT_MM)+_bdH,2*qty,'ns-Bidding','','H'); gT('Bidding',_bp,rup(OW*FT_MM)+_bdW,2*qty,'ns-Bidding','','W'); } }
         return;
       }
       const _secPart = partOf(sec);
@@ -5269,11 +5301,15 @@ function bomOf(w){ return calcWindow(w).hw.filter(h=>h.label!=='Labor' && !/^Gla
 function calcCutPlan(q){
   const pool={};
   (q.windows||[]).forEach((w,wi)=>{
-    const label=`${String(wi+1).padStart(2,'0')} · ${w.name||w.code||'Window'}`;
+    const winName=w.name||w.code||'Window';
+    const label=`${String(wi+1).padStart(2,'0')} · ${winName}`;
     prodGroups(w).forEach(gr=>{
       const key=w.series+'|'+gr.part;
       if(!pool[key]) pool[key]={series:w.series,profile:gr.part,sectionName:gr.name,items:[]};
-      gr.pieces.forEach(p=>{ for(let i=0;i<p.cnt;i++) pool[key].items.push({len:p.len,window:wi,label}); });
+      // p.tags (set by prodGroups' gT/g-with-tags) gives each physical unit of this {len,cnt} entry its
+      // own production-floor instance label (e.g. "H1","S2W1"); pieces without tags (catalogue-grid
+      // Divider/Bidding overrides, generic custom-formula sections) fall back to the plain window label.
+      gr.pieces.forEach(p=>{ for(let i=0;i<p.cnt;i++) pool[key].items.push({len:p.len,window:wi,label,winName,tag:(p.tags&&p.tags[i])||null}); });
     });
   });
   return Object.values(pool).map(grp=>{
@@ -5792,8 +5828,17 @@ function renderDesignSummary(){
 // Groups pieces within one physical bar by (length, source window) so the cut list shows "2434×2
 // (01 · SD1)" instead of repeating each individual piece on its own line.
 function groupBarItems(items){
+  // Tagged pieces (it.tag set) never merge with each other even at the same length on the same bar —
+  // each physical instance (H1, H2, S1W1, ...) is shown on its own line so the floor can see exactly
+  // which piece is which; untagged pieces keep the old behavior (grouped by len+label, so e.g. a
+  // catalogue-grid-override or custom-formula piece repeated on a bar still collapses to one "×N" line).
   const byKey={};
-  items.forEach(it=>{ const k=it.len+'|'+it.label; if(!byKey[k]) byKey[k]={len:it.len,label:it.label,cnt:0}; byKey[k].cnt++; });
+  items.forEach(it=>{
+    const disp = it.tag ? `${it.tag} · ${it.winName}` : it.label;
+    const k = it.len+'|'+it.window+'|'+(it.tag||it.label);
+    if(!byKey[k]) byKey[k]={len:it.len,label:disp,cnt:0};
+    byKey[k].cnt++;
+  });
   return Object.values(byKey).sort((a,b)=>b.len-a.len);
 }
 function renderProduction(){
