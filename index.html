@@ -5758,7 +5758,7 @@ function winFormHTML(w,r){
      <div class="field"><label>Transoms (horizontal dividers)</label><input data-k="fRows" type="number" step="1" min="0" value="${w.fRows||0}" ${bind}></div>
      <div class="muted f-col" style="align-self:center;font-size:12px;grid-column:span 2">Enter count of internal mullions / transoms</div>
    </div>`:''}
-   ${isFixed?'':`
+   ${wtype==='fixed'?'':`
    <div class="f4">
      <div class="field"><label>Lock type</label><select data-k="lockType" ${bind}>${optBlank(locks,w.lockType)}</select></div>
      <div class="field"><label>Handle brand</label><select data-k="handleBrand" ${bind}>${optBlank(brands,w.handleBrand)}</select></div>
