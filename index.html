@@ -7494,7 +7494,7 @@ function startRatesSync(){
   _checkRatesSync(); // fire immediately on login
   _checkQuotesSync();
   _checkImagesSync();
-  _ratesSyncTimer=setInterval(async()=>{await _checkRatesSync();await _checkQuotesSync();await _checkImagesSync();},60000);
+  _ratesSyncTimer=setInterval(async()=>{await _checkRatesSync();await _checkQuotesSync();await _checkImagesSync();},3600000); // was 60000 — slowed to hourly to cut Supabase egress (every open tab was polling 3x/min indefinitely)
 }
 function stopRatesSync(){ if(_ratesSyncTimer){clearInterval(_ratesSyncTimer);_ratesSyncTimer=null;} }
 let _pollTimer=null;
