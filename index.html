@@ -4462,7 +4462,11 @@ function brandsFor(series,lockType,wtype){
       if(!m.brand) return false;
       if(lockType && m.lockType!==lockType) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
-      if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
+      // Combo windows (casement+fixed, awning+fixed, sliding+fixed) use the same openable-shutter
+      // hardware as their base type — strip the "+fixed" suffix before matching, or every combo
+      // window matches zero handles (handle metadata is never literally tagged "casement+fixed").
+      const bw=wtype?wtype.replace('+fixed',''):wtype;
+      if(bw && wt!=='both' && wt!==bw && !(wt==='casement'&&bw==='awning')) return false;
       return true;
     })
     .map(m=>m.brand);
@@ -4476,7 +4480,9 @@ function modelsFor(brand,lockType,wtype){
       if(m.brand!==brand||!brand) return false;
       if(lockType && m.lockType!==lockType) return false;
       const wt=m.winType||inferWinType(m.lockType||'');
-      if(wtype && wt!=='both' && wt!==wtype && !(wt==='casement'&&wtype==='awning')) return false;
+      // Same combo-wtype fix as brandsFor() above.
+      const bw=wtype?wtype.replace('+fixed',''):wtype;
+      if(bw && wt!=='both' && wt!==bw && !(wt==='casement'&&bw==='awning')) return false;
       return true;
     })
     .map(([k])=>k);
@@ -7380,9 +7386,19 @@ async function cloudPullRates(){
       const rates=parsed.data||parsed;
       const ts=parsed.ts||0;
       DB.rates=rates; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); migrateBuiltinSystemMetaCleanup(DB.rates); _ratesCloudTs=ts; save();
-      if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
+      refreshLiveViewsAfterRatesChange();
     }
   }catch(e){console.warn('cloudPullRates',e);}
+}
+// These two checks used to look for #view-rates / #view-quotes elements that don't exist in this
+// app's markup (go() only toggles .active on .nav[data-view] sidebar buttons) — so a background sync
+// that found newer data would update DB.rates/DB.quotes in memory but never redraw anything already
+// on screen, including the open quote editor's window cards (Lock type/Handle brand/Hinge/etc, which
+// are baked into HTML once per window and only redrawn individually via upd()'s per-field cascade).
+// This reads the real markup instead, and also redraws the editor's window list when it's open.
+function refreshLiveViewsAfterRatesChange(){
+  if(document.querySelector('.nav[data-view="rates"].active')) renderRates();
+  if(document.querySelector('.nav[data-view="editor"].active') && SUB==='design') renderWindows();
 }
 async function cloudSavePerms(){
   if(!SB)return;
@@ -7442,7 +7458,10 @@ async function _checkQuotesSync(){
         for(const _q of _dgQChanged2){ await cloudSaveQuote(_q); }
         for(const _q of _wtRevChanged2){ if(!_dgQChanged2.includes(_q)) await cloudSaveQuote(_q); }
         toast('⟳ Quotes updated from cloud');
-        if(document.querySelector('#view-quotes.active')) renderQuotes();
+        // Was document.querySelector('#view-quotes.active') — that id/class doesn't exist in this
+        // app's markup (go() toggles .active on .nav[data-view] sidebar buttons instead), so this
+        // never actually refreshed the Quotes list after a background sync. Real selector below.
+        if(document.querySelector('.nav[data-view="quotes"].active')) renderQuotes();
       }
     }
   }catch(e){}
@@ -7480,7 +7499,7 @@ async function _checkRatesSync(){
       if(ts>_ratesCloudTs){ // someone else pushed newer rates
         DB.rates=parsed.data||parsed; migrateHandleMeta(DB.rates); migrateModernaWidth(DB.rates); migrateSlidingWheelsQty(DB.rates); migrateDgSlidingTrack(DB.rates); migrateDgSlidingRename(DB.rates); migrateBuiltinSystemMetaCleanup(DB.rates); _ratesCloudTs=ts; save();
         toast('⟳ Rates updated from cloud');
-        if(document.querySelector('.view.active[id="view-rates"]')) renderRates();
+        refreshLiveViewsAfterRatesChange();
       }
     } else {
       // cloud has no rates yet — if we have local rates, push them up now
