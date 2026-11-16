@@ -4878,7 +4878,17 @@ function calcWindow(w){
     // (2*(g[6]+g[7])) using the Shutter Height/Width fields' leftover default values (those fields are
     // hidden for Fixed windows but the dim values still exist at their defaults), which otherwise
     // produced a phantom Shutter Section no shutter actually needs.
-    if((num(w.nShutters)||0)>0) addSec('Shutter Section','Shutter',ds.shutter);
+    // ds.shutter is one shutter's perimeter. Bespoke per-code designs (SEED.designs[code]) are hand-
+    // authored and some already bake their own multiplier into the formula to match that specific
+    // code's verified shop-drawing numbers (e.g. PSG-Z9M-26384, PSG-B8L-37209 — and at least two of
+    // those bake ×2 for reasons that do NOT equal shutterQty, so multiplying those again here would
+    // double-count them). defaultDesign (the generic fallback used by most catalogue codes that never
+    // got a bespoke design — e.g. this window's own code) has zero shutter-count awareness at all, so
+    // only it gets multiplied by Shutter Qty here. Confirmed against PSG-ELC-92193 (2 shutters): was
+    // pricing Shutter Section at 12rft (one shutter), should be 24rft (two).
+    const _shQty=Math.max(1,num(w.nShutters)||1);
+    const _shMul=(ds.des===SEED.defaultDesign)?_shQty:1;
+    if((num(w.nShutters)||0)>0) addSec('Shutter Section','Shutter',ds.shutter*_shMul);
     // ---- multi-segment fixed: internal mullions & transoms ----
     if(wtype==='fixed'){
       const fCols=Math.max(0,num(w.fCols)||0), fRows=Math.max(0,num(w.fRows)||0);
