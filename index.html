@@ -4850,7 +4850,9 @@ function calcWindow(w){
     const _divRows=(_dcat&&Array.isArray(_dcat.dividers)&&_dcat.dividers.length)?_dcat.dividers:null;
     addSec('Outside Section','Outer',_outerOv!=null?_outerOv:ds.outer);
     if(_divRows){
-      const _divTotal=_divRows.reduce((s,r)=>s+evalCatFormula(r.formula,_fVars),0);
+      // Row total = Qty × formula (matches the catalogue editor's own preview) — e.g. formula "SH"
+      // with Qty 2 means two bars, each SH long, same as writing "SH*2" with Qty 1.
+      const _divTotal=_divRows.reduce((s,r)=>s+(num(r.qty)||1)*evalCatFormula(r.formula,_fVars),0);
       addSec('Divider Section','Divider',_divTotal);
     } else {
       addSec('Divider Section','Divider',ds.divider);
@@ -6188,8 +6190,10 @@ function catFormulaPreview(){
   if(shutterF){ const v=evalCatFormula(shutterF,vars); parts.push(`Shutter: ${shutterF} = ${v.toFixed(0)}mm (${(v/304.8).toFixed(2)} rft)`); }
   const divFilled=_catDivDraft.filter(r=>(r.formula||'').trim());
   if(divFilled.length){
-    const rowTxt=divFilled.map(r=>`${esc(r.label)}: ${esc(r.formula)} = ${evalCatFormula(r.formula,vars).toFixed(0)}mm`).join(' · ');
-    const total=divFilled.reduce((s,r)=>s+evalCatFormula(r.formula,vars),0);
+    // Row total = Qty × formula — e.g. formula "SH" with Qty 2 means "two bars, each SH long", same
+    // as writing "SH*2" with Qty 1. Qty is a real multiplier here, not just a label.
+    const rowTxt=divFilled.map(r=>`${esc(r.label)}: ${(num(r.qty)||1)}×(${esc(r.formula)}) = ${((num(r.qty)||1)*evalCatFormula(r.formula,vars)).toFixed(0)}mm`).join(' · ');
+    const total=divFilled.reduce((s,r)=>s+(num(r.qty)||1)*evalCatFormula(r.formula,vars),0);
     parts.push(`${rowTxt} · <b>Total Divider = ${total.toFixed(0)}mm = ${(total/304.8).toFixed(2)} rft</b>`);
   }
   prev.innerHTML=parts.length?parts.join('<br>'):'<span class="muted">No formulas set — this window type prices normally.</span>';
