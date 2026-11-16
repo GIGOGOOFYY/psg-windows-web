@@ -136,7 +136,7 @@
     .mode-ds #printRoot table td{ vertical-align:top; }
   }
   #printRoot{display:none;background:#fff;color:#111}
-  body.printing #printRoot{display:block;position:fixed;inset:0;z-index:9999;overflow:auto;padding:14px}
+  body.printing #printRoot{display:block;position:fixed;inset:0;z-index:9999;overflow:auto;padding:26px}
   #printRoot .qh{display:flex;justify-content:space-between;border-bottom:3px solid var(--print-accent,#56906d);padding-bottom:12px;margin-bottom:14px}
   #printRoot table{font-size:12px}#printRoot th{color:#333;border-bottom:2px solid #333}#printRoot td{border-bottom:1px solid #ccc}
   #printRoot h3{margin:18px 0 6px}
@@ -7075,20 +7075,8 @@ function doPrint(id,mode){
         const nShW=Math.max(1,num(w.nShutters)||1);
         const wSegsMm=(nShW>=2)?(()=>{const base=Math.floor(wMm/nShW),rem=wMm-base*nShW;return Array.from({length:nShW},(_,i)=>base+(i<rem?1:0));})():null;
         const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
-        // Fit the drawing box to this window's real OW:OH aspect inside a 90x115pt
-        // bounding box (the same approach winDiagramSVG already uses for its own
-        // vector fallback). A fixed 90x115 box for every window regardless of shape
-        // let a letterboxed catalogue photo drift out of alignment with the
-        // dimension arrows, which were drawn across the *full* box: a very narrow
-        // tall window and a very wide short window both got squeezed into the same
-        // square-ish box, so the arrows no longer lined up with where the photo's
-        // panels actually are. Sizing the box — and the arrows — to the real
-        // aspect keeps them locked together for every window size.
-        const maxBoxW=90,maxBoxH=115;
-        const boxRatio=OH/OW;
-        let iW=maxBoxW, iH=Math.round(iW*boxRatio);
-        if(iH>maxBoxH){ iH=maxBoxH; iW=Math.round(iH/boxRatio); }
-        iW=Math.max(24,iW); iH=Math.max(24,iH);
+        // Fixed image box: always 90×115px
+        const iW=90,iH=115;
         const picHtml=catImgStatic(w&&w.code||'',cat)
           ?`<img src="${catImgStatic(w&&w.code||'',cat)}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #bbb;background:#f8f8f8">`
           :winDiagramSVG(w,iW,iH);
