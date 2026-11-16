@@ -6062,6 +6062,10 @@ function openAddCatalogueItem(editCode){
   const existing=editCode?DB.rates.catalogue.find(x=>x.code===editCode):null;
   const allCats=[...new Set([...DB.rates.catalogue.map(c=>c.category),'Casement','Fixed','Sliding','Awning','Door'])];
   const autoCode=editCode?(existing?existing.code:''):genCatalogueCode();
+  _layoutEnabled=!!(existing && existing.layoutOverride && existing.layoutOverride.enabled);
+  _layoutDraft=(existing && existing.layoutOverride && Array.isArray(existing.layoutOverride.columns) && existing.layoutOverride.columns.length)
+    ? existing.layoutOverride.columns.map(c=>({...c}))
+    : layoutDefaultCols();
   showModal(`<div class="hd"><h3>${editCode?'Edit':'Add'} Window Type</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
    <div class="bd" style="display:flex;flex-direction:column;gap:12px">
      <div class="f2">
@@ -6129,6 +6133,8 @@ function openAddCatalogueItem(editCode){
        <div id="ncFormulaPreview" style="font-size:12px;color:var(--green);font-family:monospace;margin-top:10px;background:rgba(32,196,138,.08);border:1px solid rgba(32,196,138,.25);border-radius:8px;padding:8px 10px"></div>
      </div>
 
+     ${layoutEditorHTML()}
+
      <div><label style="font-size:12px;font-weight:600">Web Image / GIF <span style="font-weight:400;color:#888;text-transform:none">(animated GIF or PNG — shown in app)</span></label>
        <input id="ncGifFile" type="file" accept="image/*,.gif" style="margin-top:4px" onchange="previewCatGif(this)">
        <div id="ncGifPreview" style="margin-top:8px;text-align:center">${existing&&existing.gif?`<img src="${existing.gif}" style="max-height:100px;border:1px solid var(--line)">`:''}</div>
@@ -6147,6 +6153,7 @@ function openAddCatalogueItem(editCode){
   // addCatDivRow/removeCatDivRow/updateCatDivRow and read back by saveCatalogueItem on save.
   _catDivDraft=(existing&&Array.isArray(existing.dividers))?existing.dividers.map(r=>({...r})):[];
   refreshCatDivUI();
+  renderLayoutCanvas();
 }
 /* ---- Catalogue "Edit Window Type" Section Formulas / Divider Components (per-code pricing
    override, see calcWindow's _outerOv/_shutterOv/_divRows) ---- */
@@ -6178,6 +6185,167 @@ function addCatDivRow(){
 }
 function removeCatDivRow(i){ _catDivDraft.splice(i,1); refreshCatDivUI(); }
 function updateCatDivRow(i,key,val){ if(!_catDivDraft[i]) return; _catDivDraft[i][key]=key==='qty'?num(val):val; catFormulaPreview(); }
+/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
+   drives directly (click a panel to cycle its type, drag the dividing lines to resize) instead of
+   divider-formula guessing. Mirrors the _catDivDraft pattern used by Divider Components above:
+   _layoutDraft is the working copy, edited in place, read back by saveCatalogueItem on save.
+   dsGeometry consumes the saved layoutOverride (see its "ov.enabled" branch) ahead of every other
+   heuristic (local-transom divider rows, then the aggregate dividerQty/dividerDir grid) whenever
+   enabled, so pricing (which still reads dividerQty/dividerDir/dividers[] untouched) is unaffected —
+   this only changes what the Design Summary drawing shows. */
+let _layoutDraft=[]; // [{wFrac,type,splitTopFrac}]
+let _layoutEnabled=false;
+let _layoutDrag=null;
+const LAYOUT_CW=320, LAYOUT_CH=200;
+
+function layoutDefaultCols(){ return [{wFrac:1,type:'fixed'}]; }
+function layoutCycleType(t){
+  const order=['fixed','shutter','split-top-open','split-bottom-open'];
+  const i=order.indexOf(t); return order[(i+1)%order.length];
+}
+function layoutTypeLabel(t){
+  return t==='shutter'?'Shutter (fully openable)'
+    : t==='split-top-open'?'Split — shutter on top, fixed below'
+    : t==='split-bottom-open'?'Split — fixed on top, shutter below'
+    : 'Fixed (closed)';
+}
+
+function layoutEditorHTML(){
+  return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)">
+        Elevation Layout Override <span style="font-size:10px;background:var(--accent2);border-radius:6px;padding:2px 6px;font-weight:700">optional</span>
+      </div>
+      <label style="font-size:11px;display:flex;align-items:center;gap:6px;font-weight:600">
+        <input type="checkbox" id="ncLayoutEnabled" ${_layoutEnabled?'checked':''} onchange="layoutToggleEnabled(this.checked)"> Use custom layout
+      </label>
+    </div>
+    <div class="muted" style="font-size:11px;margin-bottom:10px">Draw the real section layout for this code's Design Summary drawing directly — click a panel to cycle Fixed → Shutter → Split (shutter on top) → Split (shutter below) → Fixed, drag the lines to resize. This overrides Divider Qty/Direction and Divider Components above for the drawing only — pricing still uses those fields as normal.</div>
+    <div id="ncLayoutEditor" style="${_layoutEnabled?'':'display:none'}">
+      <div id="ncLayoutCanvasWrap" style="display:flex;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;justify-content:center;margin-bottom:6px">
+        <button type="button" class="ghost sm" onclick="layoutAddCol()">+ Add Column</button>
+        <button type="button" class="ghost sm" onclick="layoutRemoveCol()">− Remove Column</button>
+      </div>
+      <div class="muted" style="font-size:10px;text-align:center">Percentages are of total window width / height, so the layout scales to any instance's real dimensions.</div>
+    </div>
+  </div>`;
+}
+
+function layoutToggleEnabled(checked){
+  _layoutEnabled=checked;
+  const ed=document.getElementById('ncLayoutEditor');
+  if(ed) ed.style.display=checked?'':'none';
+  if(checked && (!_layoutDraft||!_layoutDraft.length)) _layoutDraft=layoutDefaultCols();
+  if(checked) renderLayoutCanvas();
+}
+
+function layoutAddCol(){
+  if(_layoutDraft.length>=8){ toast('Max 8 columns'); return; }
+  const n=_layoutDraft.length+1;
+  _layoutDraft.forEach(c=>c.wFrac=c.wFrac*(n-1)/n);
+  _layoutDraft.push({wFrac:1/n,type:'fixed'});
+  renderLayoutCanvas();
+}
+function layoutRemoveCol(){
+  if(_layoutDraft.length<=1) return;
+  _layoutDraft.pop();
+  const sum=_layoutDraft.reduce((a,c)=>a+c.wFrac,0)||1;
+  _layoutDraft.forEach(c=>c.wFrac=c.wFrac/sum);
+  renderLayoutCanvas();
+}
+function layoutColClick(i){
+  if(!_layoutDraft[i]) return;
+  _layoutDraft[i].type=layoutCycleType(_layoutDraft[i].type);
+  if(_layoutDraft[i].type.indexOf('split')===0 && _layoutDraft[i].splitTopFrac==null) _layoutDraft[i].splitTopFrac=0.5;
+  renderLayoutCanvas();
+}
+
+function renderLayoutCanvas(){
+  const wrap=document.getElementById('ncLayoutCanvasWrap');
+  if(!wrap) return;
+  const cols=_layoutDraft;
+  const total=cols.reduce((a,c)=>a+c.wFrac,0)||1;
+  let x=0;
+  const colPx=cols.map(c=>{ const w=(c.wFrac/total)*LAYOUT_CW; const px={x0:x,w,c}; x+=w; return px; });
+  let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+22}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+22}" style="overflow:visible">
+    <rect x="1" y="1" width="${LAYOUT_CW-2}" height="${LAYOUT_CH-2}" fill="none" stroke="#222" stroke-width="2.5"/>`;
+  colPx.forEach((cp,i)=>{
+    const {x0,w,c}=cp;
+    if(c.type==='fixed'||c.type==='shutter'){
+      const open=c.type==='shutter';
+      svg+=`<rect x="${x0+1}" y="1" width="${Math.max(1,w-2)}" height="${LAYOUT_CH-2}" fill="${open?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>`;
+      if(!open){ svg+=`<line x1="${x0+4}" y1="4" x2="${x0+w-4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="4" x2="${x0+4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`; }
+      else { const cy=LAYOUT_CH/2; svg+=`<line x1="${x0+8}" y1="10" x2="${x0+w-8}" y2="${cy}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy} ${x0+w-16},${cy-5} ${x0+w-16},${cy+5}" fill="#2a2" pointer-events="none"/>`; }
+    } else {
+      const topFrac=Math.min(0.95,Math.max(0.05,num(c.splitTopFrac)||0.5));
+      const splitY=topFrac*LAYOUT_CH;
+      const topOpen=c.type==='split-top-open';
+      svg+=`<rect x="${x0+1}" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,splitY-1)}" fill="${topOpen?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>
+        <rect x="${x0+1}" y="${splitY}" width="${Math.max(1,w-2)}" height="${Math.max(1,LAYOUT_CH-splitY-1)}" fill="${!topOpen?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>`;
+      if(topOpen){
+        const cy1=splitY/2+2;
+        svg+=`<line x1="${x0+8}" y1="6" x2="${x0+w-8}" y2="${cy1}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy1} ${x0+w-16},${cy1-5} ${x0+w-16},${cy1+5}" fill="#2a2" pointer-events="none"/>
+          <line x1="${x0+4}" y1="${splitY+4}" x2="${x0+w-4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="${splitY+4}" x2="${x0+4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`;
+      } else {
+        const cy2=(splitY+LAYOUT_CH)/2;
+        svg+=`<line x1="${x0+4}" y1="4" x2="${x0+w-4}" y2="${splitY-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="4" x2="${x0+4}" y2="${splitY-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>
+          <line x1="${x0+8}" y1="${splitY+6}" x2="${x0+w-8}" y2="${cy2}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy2} ${x0+w-16},${cy2-5} ${x0+w-16},${cy2+5}" fill="#2a2" pointer-events="none"/>`;
+      }
+      svg+=`<rect x="${x0+1}" y="${splitY-4}" width="${Math.max(1,w-2)}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragSplit(event,${i})"/>
+        <line x1="${x0+1}" y1="${splitY}" x2="${x0+w-1}" y2="${splitY}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
+    }
+    svg+=`<text x="${x0+w/2}" y="${LAYOUT_CH+15}" font-size="9" text-anchor="middle" fill="#666">${Math.round((c.wFrac/total)*100)}% · ${layoutTypeLabel(c.type).split(' ')[0].replace('(','').replace(/[—,]/,'')}</text>`;
+  });
+  for(let i=1;i<colPx.length;i++){
+    const x=colPx[i].x0;
+    svg+=`<rect x="${x-4}" y="1" width="8" height="${LAYOUT_CH-2}" fill="transparent" style="cursor:ew-resize" onmousedown="layoutStartDragBoundary(event,${i})"/>
+      <line x1="${x}" y1="1" x2="${x}" y2="${LAYOUT_CH-1}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
+  }
+  svg+=`</svg>`;
+  wrap.innerHTML=svg;
+}
+
+function layoutStartDragBoundary(ev,i){
+  ev.preventDefault();
+  const svgEl=ev.target.closest('svg'); if(!svgEl) return;
+  _layoutDrag={kind:'boundary',idx:i,rect:svgEl.getBoundingClientRect()};
+  document.addEventListener('mousemove',layoutOnDragMove);
+  document.addEventListener('mouseup',layoutOnDragEnd);
+}
+function layoutStartDragSplit(ev,i){
+  ev.preventDefault();
+  const svgEl=ev.target.closest('svg'); if(!svgEl) return;
+  _layoutDrag={kind:'split',idx:i,rect:svgEl.getBoundingClientRect()};
+  document.addEventListener('mousemove',layoutOnDragMove);
+  document.addEventListener('mouseup',layoutOnDragEnd);
+}
+function layoutOnDragMove(ev){
+  if(!_layoutDrag) return;
+  const d=_layoutDrag;
+  if(d.kind==='boundary'){
+    const xPx=Math.min(LAYOUT_CW-8,Math.max(8,ev.clientX-d.rect.left));
+    const xFracAbs=xPx/LAYOUT_CW;
+    const total=_layoutDraft.reduce((a,c)=>a+c.wFrac,0)||1;
+    let cum=0; for(let k=0;k<d.idx-1;k++) cum+=_layoutDraft[k].wFrac/total;
+    const leftStart=cum;
+    const pairSum=_layoutDraft[d.idx-1].wFrac/total + _layoutDraft[d.idx].wFrac/total;
+    let newLeftFrac=xFracAbs-leftStart;
+    newLeftFrac=Math.max(0.03,Math.min(pairSum-0.03,newLeftFrac));
+    _layoutDraft[d.idx-1].wFrac=newLeftFrac*total;
+    _layoutDraft[d.idx].wFrac=(pairSum-newLeftFrac)*total;
+    renderLayoutCanvas();
+  } else if(d.kind==='split'){
+    const yPx=Math.min(LAYOUT_CH-8,Math.max(8,ev.clientY-d.rect.top));
+    _layoutDraft[d.idx].splitTopFrac=Math.max(0.05,Math.min(0.95,yPx/LAYOUT_CH));
+    renderLayoutCanvas();
+  }
+}
+function layoutOnDragEnd(){
+  _layoutDrag=null;
+  document.removeEventListener('mousemove',layoutOnDragMove);
+  document.removeEventListener('mouseup',layoutOnDragEnd);
+}
 function catFormulaPreview(){
   const prev=document.getElementById('ncFormulaPreview'); if(!prev) return;
   const vars={OW:num(document.getElementById('ncTestOW').value),OH:num(document.getElementById('ncTestOH').value),
@@ -6240,7 +6408,8 @@ function saveCatalogueItem(editCode){
   // Interlock Section comment), so it isn't collected or written for new/edited catalogue entries
   // either. Existing catalogue entries still carry a harmless, now-ignored interlockDouble:false/true
   // field; nothing reads it anymore so it's inert, not worth a migration to strip out.
-  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers};
+  const layoutOverride={enabled:_layoutEnabled,columns:(_layoutDraft||[]).map(c=>({wFrac:c.wFrac,type:c.type,splitTopFrac:c.splitTopFrac}))};
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
@@ -6852,6 +7021,35 @@ function dsGeometry(w){
     nShOpen=0;
   } else {
     const cat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+    const ov=cat&&cat.layoutOverride;
+    // Manual override (Catalogue → Edit Window Type → Elevation Layout Override) always wins when
+    // enabled: the user has drawn the exact column/split layout themselves, so no divider-formula
+    // guessing is needed or applied for this code. wFrac/splitTopFrac are fractions (0..1), scale-
+    // invariant across any real instance's OW/OH — re-normalized here in case stored fractions don't
+    // sum to exactly 1 (manual edits, rounding).
+    if(ov && ov.enabled && Array.isArray(ov.columns) && ov.columns.length){
+      let fracs=ov.columns.map(c=>Math.max(0.01,num(c.wFrac)||0));
+      const fracSum=fracs.reduce((a,b)=>a+b,0)||1;
+      fracs=fracs.map(f=>f/fracSum);
+      columns=ov.columns.map((c,i)=>{
+        const cw=Math.max(1,Math.round(fracs[i]*wMm));
+        const type=c.type||'fixed';
+        const topFrac=Math.min(0.99,Math.max(0.01,num(c.splitTopFrac)||0.5));
+        if(type==='shutter') return {wMm:cw,cells:[{hMm,open:true}]};
+        if(type==='split-top-open'){ const topMm=Math.max(1,Math.round(topFrac*hMm)); return {wMm:cw,cells:[{hMm:topMm,open:true},{hMm:Math.max(1,hMm-topMm),open:false}]}; }
+        if(type==='split-bottom-open'){ const topMm=Math.max(1,Math.round(topFrac*hMm)); return {wMm:cw,cells:[{hMm:topMm,open:false},{hMm:Math.max(1,hMm-topMm),open:true}]}; }
+        return {wMm:cw,cells:[{hMm,open:false}]}; // 'fixed'
+      });
+      const sumW=columns.reduce((a,c)=>a+c.wMm,0);
+      if(columns.length) columns[columns.length-1].wMm=Math.max(1,columns[columns.length-1].wMm+(wMm-sumW));
+      colsMm=columns.map(c=>c.wMm);
+      nShOpen=columns.reduce((a,c)=>a+c.cells.filter(x=>x.open).length,0);
+      if(rawSec.length<2){
+        const splitDef=ov.columns.find(c=>c.type==='split-top-open'||c.type==='split-bottom-open');
+        if(splitDef){ const topFrac=Math.min(0.99,Math.max(0.01,num(splitDef.splitTopFrac)||0.5)); const topMm=Math.max(1,Math.round(topFrac*hMm)); rowsMm=[topMm,Math.max(1,hMm-topMm)]; rowsTotalMm=hMm; }
+        else { rowsMm=[hMm]; rowsTotalMm=hMm; }
+      }
+    } else {
     const divRows=(cat&&Array.isArray(cat.dividers))?cat.dividers:[];
     // Per-row divider components can describe a LOCAL transom pattern the aggregate dividerQty/
     // dividerDir field cannot: a full-height vertical divider (formula "OH") sets the real column
@@ -6899,6 +7097,7 @@ function dsGeometry(w){
         rowsMm=Array.from({length:nRowsFromDiv},(_,i)=>base2+(i<rem2?1:0));
         rowsTotalMm=hMm;
       }
+    }
     }
   }
 
