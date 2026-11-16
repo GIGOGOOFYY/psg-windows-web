@@ -4570,6 +4570,12 @@ function getDesign(w){ return (w.code&&SEED.designs[w.code])||SEED.defaultDesign
 function dimVal(w,n){ return num((w.dim||{})[n]); }
 function evalExpr(expr,g,series){ if(!expr) return 0;
   try{ return Function('g','IF','OR','C4','return ('+expr+')')(g,(c,a,b)=>c?a:b,(...a)=>a.some(Boolean),series)||0; }catch(e){ return 0; } }
+/* evalCatFormula: per-catalogue-code Section Formula override (Catalogue → Edit Window Type →
+   Section Formulas / Divider Components). Named variables (OW,OH,SH,SW,ShutterQty), mm in/mm out —
+   a plain-English alternative to evalExpr's g[] array, meant to be typed directly by the user. */
+function evalCatFormula(expr,vars){ if(!expr) return 0;
+  try{ const keys=Object.keys(vars),vals=keys.map(k=>vars[k]);
+    return Function(...keys,'return ('+expr+')')(...vals)||0; }catch(e){ return 0; } }
 function resolveG(w,series){ const des=getDesign(w), g=[];
   des.inputs.forEach(i=>{ g[i.n]=dimVal(w,i.n); });
   des.derived.forEach(d=>{ g[d.n]=evalExpr(d.expr,g,series); });
@@ -4829,8 +4835,26 @@ function calcWindow(w){
   } else {
     // per-design formulas from the workbook design sheet
     const ds=designSections(w,series); dsSec=ds;
-    addSec('Outside Section','Outer',ds.outer);
-    addSec('Divider Section','Divider',ds.divider);
+    const _dcat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+    // Per-catalogue-code Section Formula overrides (Catalogue → Edit Window Type → Section Formulas /
+    // Divider Components) — an escape hatch for designs that neither a design-sheet formula nor the
+    // Divider Qty+Direction grid below can express (e.g. a transom splitting off a fixed strip, then
+    // vertical dividers that only span the shorter shutter zone below it, not the full outer height —
+    // confirmed directly against the user's own hand-calculated PSG-FBR-67122 numbers: Divider =
+    // OW + 2×SH = 13.91rft, which the Qty+Direction grid can only ever get at OH/OW multiples of).
+    // Blank/unset for a code (the overwhelming majority) = zero behavior change, falls through to
+    // every existing formula below exactly as before.
+    const _fVars={OW,OH,SH,SW,ShutterQty:Math.max(1,num(w.nShutters)||1)};
+    const _outerOv=(_dcat&&_dcat.outerFormula)?evalCatFormula(_dcat.outerFormula,_fVars):null;
+    const _shutterOv=(_dcat&&_dcat.shutterFormula)?evalCatFormula(_dcat.shutterFormula,_fVars):null;
+    const _divRows=(_dcat&&Array.isArray(_dcat.dividers)&&_dcat.dividers.length)?_dcat.dividers:null;
+    addSec('Outside Section','Outer',_outerOv!=null?_outerOv:ds.outer);
+    if(_divRows){
+      const _divTotal=_divRows.reduce((s,r)=>s+evalCatFormula(r.formula,_fVars),0);
+      addSec('Divider Section','Divider',_divTotal);
+    } else {
+      addSec('Divider Section','Divider',ds.divider);
+    }
     // Catalogue-driven divider/grid geometry (separate from any per-design divider formula above, and
     // from the Mullions/Transoms fields which are reserved for multi-segment/curtain-wall windows): most
     // catalogue codes (e.g. PSG-C9V-91752) use defaultDesign, and even a bespoke per-code design (e.g.
@@ -4838,8 +4862,10 @@ function calcWindow(w){
     // catalogue's own Divider Qty/Direction, so both Divider length AND Bidding length need a
     // catalogue-driven override whenever this code is actually split into more than one column/row.
     // _nCols/_nRows: how many vertical columns / horizontal rows the Divider Qty+Direction splits the
-    // window into (3 columns for 2 vertical dividers, etc.) — used below for Bidding.
-    const _dcat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+    // window into (3 columns for 2 vertical dividers, etc.) — used below for Bidding. Still driven off
+    // Divider Qty/Direction even when _divRows overrides the Divider Section's own length above —
+    // Bidding's grid math is a separate concern from this new override, which only replaces how the
+    // Divider Section's length itself is computed.
     const _dQty=Math.max(0,num(_dcat&&_dcat.dividerQty)||0);
     const _dDir=((_dcat&&_dcat.dividerDir)||'none').toLowerCase();
     let _nCols=1,_nRows=1;
@@ -4851,7 +4877,7 @@ function calcWindow(w){
     // Divider length: Opening Height × qty for a vertical divider (it runs the height of the frame),
     // Opening Width × qty for horizontal. Only fires when no design formula already produced a divider
     // length, so a catalogue code with its own custom divider formula isn't doubled.
-    if(ds.divider<=0 && _dQty>0){
+    if(!_divRows && ds.divider<=0 && _dQty>0){
       if(_dDir==='vertical') addSec('Divider Section','Divider',OH*_dQty);
       else if(_dDir==='horizontal') addSec('Divider Section','Divider',OW*_dQty);
       else if(_dDir==='both'){ const _v=Math.floor(_dQty/2),_h=_dQty-_v;
@@ -4888,7 +4914,7 @@ function calcWindow(w){
     // pricing Shutter Section at 12rft (one shutter), should be 24rft (two).
     const _shQty=Math.max(1,num(w.nShutters)||1);
     const _shMul=(ds.des===SEED.defaultDesign)?_shQty:1;
-    if((num(w.nShutters)||0)>0) addSec('Shutter Section','Shutter',ds.shutter*_shMul);
+    if((num(w.nShutters)||0)>0) addSec('Shutter Section','Shutter',_shutterOv!=null?_shutterOv:ds.shutter*_shMul);
     // ---- multi-segment fixed: internal mullions & transoms ----
     if(wtype==='fixed'){
       const fCols=Math.max(0,num(w.fCols)||0), fRows=Math.max(0,num(w.fRows)||0);
@@ -6066,6 +6092,41 @@ function openAddCatalogueItem(editCode){
        <select id="ncDdir" style="width:100%;margin-top:4px">
          ${['none','horizontal','vertical','both'].map(d=>`<option value="${d}" ${existing&&(existing.dividerDir||'none')===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
        </select></div>
+
+     <div style="border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2)">
+       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:8px">
+         Section Formulas <span style="font-size:10px;background:var(--accent2);border-radius:6px;padding:2px 6px;font-weight:700">optional override</span>
+       </div>
+       <div class="muted" style="font-size:11px;margin-bottom:10px">Leave blank to use this app's normal pricing for this window type. Fill in to override — for this one catalogue code only.</div>
+       <div class="f2" style="margin-bottom:8px">
+         <div><label style="font-size:11px;font-weight:600">Outer</label>
+           <input id="ncOuterFormula" value="${esc(existing&&existing.outerFormula||'')}" placeholder="(OW+OH)*2" style="margin-top:3px;font-family:monospace" oninput="catFormulaPreview()"></div>
+         <div><label style="font-size:11px;font-weight:600">Shutter</label>
+           <input id="ncShutterFormula" value="${esc(existing&&existing.shutterFormula||'')}" placeholder="(SH+SW)*2*ShutterQty" style="margin-top:3px;font-family:monospace" oninput="catFormulaPreview()"></div>
+       </div>
+       <div class="muted" style="font-size:10px;font-family:monospace">Variables: OW, OH, SH, SW, ShutterQty — mm in, mm out</div>
+     </div>
+
+     <div style="border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2)">
+       <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:8px">
+         Divider Components <span style="font-size:10px;background:var(--accent2);border-radius:6px;padding:2px 6px;font-weight:700">optional override</span>
+       </div>
+       <div class="muted" style="font-size:11px;margin-bottom:10px">Add one row per divider bar type. All rows combine into a single Divider Section line on the quote — this is what controls the "should be combined" behavior.</div>
+       <div id="ncDivRows"></div>
+       <button type="button" class="ghost sm" style="width:100%;margin-top:6px" onclick="addCatDivRow()">+ Add Divider</button>
+       <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">
+         <div class="muted" style="font-size:10px;margin-bottom:6px">Test dimensions — for this preview only, not saved</div>
+         <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
+           <div><label style="font-size:10px">OW</label><input id="ncTestOW" type="number" value="1800" style="margin-top:2px;padding:5px" oninput="catFormulaPreview()"></div>
+           <div><label style="font-size:10px">OH</label><input id="ncTestOH" type="number" value="1800" style="margin-top:2px;padding:5px" oninput="catFormulaPreview()"></div>
+           <div><label style="font-size:10px">SH</label><input id="ncTestSH" type="number" value="1219" style="margin-top:2px;padding:5px" oninput="catFormulaPreview()"></div>
+           <div><label style="font-size:10px">SW</label><input id="ncTestSW" type="number" value="610" style="margin-top:2px;padding:5px" oninput="catFormulaPreview()"></div>
+           <div><label style="font-size:10px">Sh.Qty</label><input id="ncTestSQ" type="number" value="2" style="margin-top:2px;padding:5px" oninput="catFormulaPreview()"></div>
+         </div>
+       </div>
+       <div id="ncFormulaPreview" style="font-size:12px;color:var(--green);font-family:monospace;margin-top:10px;background:rgba(32,196,138,.08);border:1px solid rgba(32,196,138,.25);border-radius:8px;padding:8px 10px"></div>
+     </div>
+
      <div><label style="font-size:12px;font-weight:600">Web Image / GIF <span style="font-weight:400;color:#888;text-transform:none">(animated GIF or PNG — shown in app)</span></label>
        <input id="ncGifFile" type="file" accept="image/*,.gif" style="margin-top:4px" onchange="previewCatGif(this)">
        <div id="ncGifPreview" style="margin-top:8px;text-align:center">${existing&&existing.gif?`<img src="${existing.gif}" style="max-height:100px;border:1px solid var(--line)">`:''}</div>
@@ -6080,6 +6141,58 @@ function openAddCatalogueItem(editCode){
      </div>
    </div>
    <div class="ft"><button onclick="saveCatalogueItem(${editCode?`'${editCode}'`:null})">${editCode?'Save Changes':'Add to Catalogue'}</button></div>`);
+  // _catDivDraft: working copy of this code's Divider Components, edited in place by
+  // addCatDivRow/removeCatDivRow/updateCatDivRow and read back by saveCatalogueItem on save.
+  _catDivDraft=(existing&&Array.isArray(existing.dividers))?existing.dividers.map(r=>({...r})):[];
+  refreshCatDivUI();
+}
+/* ---- Catalogue "Edit Window Type" Section Formulas / Divider Components (per-code pricing
+   override, see calcWindow's _outerOv/_shutterOv/_divRows) ---- */
+let _catDivDraft=[];
+function catDivRowHTML(r,i){
+  return `<div class="divrow" style="display:flex;gap:6px;align-items:flex-end;margin-bottom:6px;padding-bottom:6px;border-bottom:1px dashed var(--line)">
+    <div style="width:64px"><label style="font-size:10px">Label</label>
+      <input value="${esc(r.label)}" style="margin-top:2px;padding:5px" oninput="updateCatDivRow(${i},'label',this.value)"></div>
+    <div style="width:100px"><label style="font-size:10px">Direction</label>
+      <select style="margin-top:2px;padding:5px" onchange="updateCatDivRow(${i},'dir',this.value)">
+        ${['horizontal','vertical'].map(d=>`<option value="${d}" ${r.dir===d?'selected':''}>${d.charAt(0).toUpperCase()+d.slice(1)}</option>`).join('')}
+      </select></div>
+    <div style="width:56px"><label style="font-size:10px">Qty</label>
+      <input type="number" value="${r.qty}" style="margin-top:2px;padding:5px" oninput="updateCatDivRow(${i},'qty',this.value)"></div>
+    <div style="flex:1"><label style="font-size:10px">Formula</label>
+      <input value="${esc(r.formula)}" style="margin-top:2px;padding:5px;font-family:monospace" oninput="updateCatDivRow(${i},'formula',this.value)"></div>
+    <button type="button" class="ghost sm" style="width:32px;padding:5px;color:var(--danger)" onclick="removeCatDivRow(${i})" title="Remove">✕</button>
+  </div>`;
+}
+function refreshCatDivUI(){
+  const el=document.getElementById('ncDivRows');
+  if(el) el.innerHTML=_catDivDraft.map((r,i)=>catDivRowHTML(r,i)).join('');
+  catFormulaPreview();
+}
+function addCatDivRow(){
+  const n=_catDivDraft.length+1;
+  _catDivDraft.push({label:'D'+n,dir:n===1?'horizontal':'vertical',qty:1,formula:''});
+  refreshCatDivUI();
+}
+function removeCatDivRow(i){ _catDivDraft.splice(i,1); refreshCatDivUI(); }
+function updateCatDivRow(i,key,val){ if(!_catDivDraft[i]) return; _catDivDraft[i][key]=key==='qty'?num(val):val; catFormulaPreview(); }
+function catFormulaPreview(){
+  const prev=document.getElementById('ncFormulaPreview'); if(!prev) return;
+  const vars={OW:num(document.getElementById('ncTestOW').value),OH:num(document.getElementById('ncTestOH').value),
+    SH:num(document.getElementById('ncTestSH').value),SW:num(document.getElementById('ncTestSW').value),
+    ShutterQty:num(document.getElementById('ncTestSQ').value)||1};
+  const outerF=(document.getElementById('ncOuterFormula').value||'').trim();
+  const shutterF=(document.getElementById('ncShutterFormula').value||'').trim();
+  const parts=[];
+  if(outerF){ const v=evalCatFormula(outerF,vars); parts.push(`Outer: ${outerF} = ${v.toFixed(0)}mm (${(v/304.8).toFixed(2)} rft)`); }
+  if(shutterF){ const v=evalCatFormula(shutterF,vars); parts.push(`Shutter: ${shutterF} = ${v.toFixed(0)}mm (${(v/304.8).toFixed(2)} rft)`); }
+  const divFilled=_catDivDraft.filter(r=>(r.formula||'').trim());
+  if(divFilled.length){
+    const rowTxt=divFilled.map(r=>`${esc(r.label)}: ${esc(r.formula)} = ${evalCatFormula(r.formula,vars).toFixed(0)}mm`).join(' · ');
+    const total=divFilled.reduce((s,r)=>s+evalCatFormula(r.formula,vars),0);
+    parts.push(`${rowTxt} · <b>Total Divider = ${total.toFixed(0)}mm = ${(total/304.8).toFixed(2)} rft</b>`);
+  }
+  prev.innerHTML=parts.length?parts.join('<br>'):'<span class="muted">No formulas set — this window type prices normally.</span>';
 }
 function editCatalogueItem(code){ openAddCatalogueItem(code); }
 function deleteCatalogueItem(code){
@@ -6108,6 +6221,13 @@ function saveCatalogueItem(editCode){
   const sq=num(document.getElementById('ncSq').value);
   const dq=num(document.getElementById('ncDq').value)||0;
   const ddir=document.getElementById('ncDdir').value;
+  const outerFormula=(document.getElementById('ncOuterFormula').value||'').trim();
+  const shutterFormula=(document.getElementById('ncShutterFormula').value||'').trim();
+  // Only rows with a non-blank formula are saved — an empty dividers array is what tells calcWindow
+  // "no override, price this code normally" (see its _divRows check), so a row the user added but
+  // never filled in must not block that fallback.
+  const dividers=_catDivDraft.filter(r=>(r.formula||'').trim())
+    .map(r=>({label:(r.label||'').trim()||'D',dir:r.dir||'horizontal',qty:num(r.qty)||1,formula:r.formula.trim()}));
   const img=document.getElementById('ncImgData').value||'';
   const gif=document.getElementById('ncGifData').value||'';
   if(!code||!cat){toast('Code and category are required');return;}
@@ -6116,7 +6236,7 @@ function saveCatalogueItem(editCode){
   // Interlock Section comment), so it isn't collected or written for new/edited catalogue entries
   // either. Existing catalogue entries still carry a harmless, now-ignored interlockDouble:false/true
   // field; nothing reads it anymore so it's inert, not worth a migration to strip out.
-  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir};
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
