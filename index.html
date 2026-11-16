@@ -6193,22 +6193,21 @@ function updateCatDivRow(i,key,val){ if(!_catDivDraft[i]) return; _catDivDraft[i
    heuristic (local-transom divider rows, then the aggregate dividerQty/dividerDir grid) whenever
    enabled, so pricing (which still reads dividerQty/dividerDir/dividers[] untouched) is unaffected —
    this only changes what the Design Summary drawing shows. */
-let _layoutDraft=[]; // [{wFrac,type,splitTopFrac}]
+/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
+   drives directly (click a cell to toggle Fixed/Shutter, drag lines to resize, Add/Remove Row to
+   split a column into any number of stacked cells) instead of divider-formula guessing. Mirrors the
+   _catDivDraft pattern used by Divider Components above: _layoutDraft is the working copy, edited in
+   place, read back by saveCatalogueItem on save. Each column is {wFrac, cells:[{hFrac,open}]} — any
+   number of cells per column, independent of every other column, so one column can have 3 rows while
+   its neighbor has 1. dsGeometry consumes the saved layoutOverride (see its "ov.enabled" branch)
+   ahead of every other heuristic whenever enabled, so pricing (still reading dividerQty/dividerDir/
+   dividers[] untouched) is unaffected — this only changes what the Design Summary drawing shows. */
+let _layoutDraft=[]; // [{wFrac,cells:[{hFrac,open}]}]
 let _layoutEnabled=false;
 let _layoutDrag=null;
-const LAYOUT_CW=320, LAYOUT_CH=200;
+const LAYOUT_CW=320, LAYOUT_CH=200, LAYOUT_LABEL_H=36;
 
-function layoutDefaultCols(){ return [{wFrac:1,type:'fixed'}]; }
-function layoutCycleType(t){
-  const order=['fixed','shutter','split-top-open','split-bottom-open'];
-  const i=order.indexOf(t); return order[(i+1)%order.length];
-}
-function layoutTypeLabel(t){
-  return t==='shutter'?'Shutter (fully openable)'
-    : t==='split-top-open'?'Split — shutter on top, fixed below'
-    : t==='split-bottom-open'?'Split — fixed on top, shutter below'
-    : 'Fixed (closed)';
-}
+function layoutDefaultCols(){ return [{wFrac:1,cells:[{hFrac:1,open:false}]}]; }
 
 function layoutEditorHTML(){
   return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2)">
@@ -6220,14 +6219,14 @@ function layoutEditorHTML(){
         <input type="checkbox" id="ncLayoutEnabled" ${_layoutEnabled?'checked':''} onchange="layoutToggleEnabled(this.checked)"> Use custom layout
       </label>
     </div>
-    <div class="muted" style="font-size:11px;margin-bottom:10px">Draw the real section layout for this code's Design Summary drawing directly — click a panel to cycle Fixed → Shutter → Split (shutter on top) → Split (shutter below) → Fixed, drag the lines to resize. This overrides Divider Qty/Direction and Divider Components above for the drawing only — pricing still uses those fields as normal.</div>
+    <div class="muted" style="font-size:11px;margin-bottom:10px">Draw the real section layout for this code's Design Summary drawing directly — click a panel to toggle it Fixed/Shutter, drag the lines to resize, use + Row / − Row under a column to split it into more sections. This overrides Divider Qty/Direction and Divider Components above for the drawing only — pricing still uses those fields as normal.</div>
     <div id="ncLayoutEditor" style="${_layoutEnabled?'':'display:none'}">
       <div id="ncLayoutCanvasWrap" style="display:flex;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px"></div>
       <div style="display:flex;gap:6px;justify-content:center;margin-bottom:6px">
         <button type="button" class="ghost sm" onclick="layoutAddCol()">+ Add Column</button>
         <button type="button" class="ghost sm" onclick="layoutRemoveCol()">− Remove Column</button>
       </div>
-      <div class="muted" style="font-size:10px;text-align:center">Percentages are of total window width / height, so the layout scales to any instance's real dimensions.</div>
+      <div class="muted" style="font-size:10px;text-align:center">Click a panel to toggle Fixed/Shutter. Drag any line to resize. Use the + / − under each column to add or remove a row within it.</div>
     </div>
   </div>`;
 }
@@ -6244,7 +6243,7 @@ function layoutAddCol(){
   if(_layoutDraft.length>=8){ toast('Max 8 columns'); return; }
   const n=_layoutDraft.length+1;
   _layoutDraft.forEach(c=>c.wFrac=c.wFrac*(n-1)/n);
-  _layoutDraft.push({wFrac:1/n,type:'fixed'});
+  _layoutDraft.push({wFrac:1/n,cells:[{hFrac:1,open:false}]});
   renderLayoutCanvas();
 }
 function layoutRemoveCol(){
@@ -6254,10 +6253,24 @@ function layoutRemoveCol(){
   _layoutDraft.forEach(c=>c.wFrac=c.wFrac/sum);
   renderLayoutCanvas();
 }
-function layoutColClick(i){
-  if(!_layoutDraft[i]) return;
-  _layoutDraft[i].type=layoutCycleType(_layoutDraft[i].type);
-  if(_layoutDraft[i].type.indexOf('split')===0 && _layoutDraft[i].splitTopFrac==null) _layoutDraft[i].splitTopFrac=0.5;
+function layoutCellClick(colIdx,cellIdx){
+  const col=_layoutDraft[colIdx]; if(!col||!col.cells[cellIdx]) return;
+  col.cells[cellIdx].open=!col.cells[cellIdx].open;
+  renderLayoutCanvas();
+}
+function layoutAddRow(colIdx){
+  const col=_layoutDraft[colIdx]; if(!col) return;
+  if(col.cells.length>=6){ toast('Max 6 rows per column'); return; }
+  const n=col.cells.length+1;
+  col.cells.forEach(c=>c.hFrac=c.hFrac*(n-1)/n);
+  col.cells.push({hFrac:1/n,open:false});
+  renderLayoutCanvas();
+}
+function layoutRemoveRow(colIdx){
+  const col=_layoutDraft[colIdx]; if(!col||col.cells.length<=1) return;
+  col.cells.pop();
+  const sum=col.cells.reduce((a,c)=>a+c.hFrac,0)||1;
+  col.cells.forEach(c=>c.hFrac=c.hFrac/sum);
   renderLayoutCanvas();
 }
 
@@ -6265,37 +6278,34 @@ function renderLayoutCanvas(){
   const wrap=document.getElementById('ncLayoutCanvasWrap');
   if(!wrap) return;
   const cols=_layoutDraft;
-  const total=cols.reduce((a,c)=>a+c.wFrac,0)||1;
+  const colTotal=cols.reduce((a,c)=>a+c.wFrac,0)||1;
   let x=0;
-  const colPx=cols.map(c=>{ const w=(c.wFrac/total)*LAYOUT_CW; const px={x0:x,w,c}; x+=w; return px; });
-  let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+22}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+22}" style="overflow:visible">
+  const colPx=cols.map((c,ci)=>{ const w=(c.wFrac/colTotal)*LAYOUT_CW; const px={x0:x,w,c,ci}; x+=w; return px; });
+  let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+LAYOUT_LABEL_H}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+LAYOUT_LABEL_H}" style="overflow:visible">
     <rect x="1" y="1" width="${LAYOUT_CW-2}" height="${LAYOUT_CH-2}" fill="none" stroke="#222" stroke-width="2.5"/>`;
-  colPx.forEach((cp,i)=>{
-    const {x0,w,c}=cp;
-    if(c.type==='fixed'||c.type==='shutter'){
-      const open=c.type==='shutter';
-      svg+=`<rect x="${x0+1}" y="1" width="${Math.max(1,w-2)}" height="${LAYOUT_CH-2}" fill="${open?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>`;
-      if(!open){ svg+=`<line x1="${x0+4}" y1="4" x2="${x0+w-4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="4" x2="${x0+4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`; }
-      else { const cy=LAYOUT_CH/2; svg+=`<line x1="${x0+8}" y1="10" x2="${x0+w-8}" y2="${cy}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy} ${x0+w-16},${cy-5} ${x0+w-16},${cy+5}" fill="#2a2" pointer-events="none"/>`; }
-    } else {
-      const topFrac=Math.min(0.95,Math.max(0.05,num(c.splitTopFrac)||0.5));
-      const splitY=topFrac*LAYOUT_CH;
-      const topOpen=c.type==='split-top-open';
-      svg+=`<rect x="${x0+1}" y="1" width="${Math.max(1,w-2)}" height="${Math.max(1,splitY-1)}" fill="${topOpen?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>
-        <rect x="${x0+1}" y="${splitY}" width="${Math.max(1,w-2)}" height="${Math.max(1,LAYOUT_CH-splitY-1)}" fill="${!topOpen?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutColClick(${i})"/>`;
-      if(topOpen){
-        const cy1=splitY/2+2;
-        svg+=`<line x1="${x0+8}" y1="6" x2="${x0+w-8}" y2="${cy1}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy1} ${x0+w-16},${cy1-5} ${x0+w-16},${cy1+5}" fill="#2a2" pointer-events="none"/>
-          <line x1="${x0+4}" y1="${splitY+4}" x2="${x0+w-4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="${splitY+4}" x2="${x0+4}" y2="${LAYOUT_CH-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`;
-      } else {
-        const cy2=(splitY+LAYOUT_CH)/2;
-        svg+=`<line x1="${x0+4}" y1="4" x2="${x0+w-4}" y2="${splitY-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x0+w-4}" y1="4" x2="${x0+4}" y2="${splitY-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>
-          <line x1="${x0+8}" y1="${splitY+6}" x2="${x0+w-8}" y2="${cy2}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${x0+w-8},${cy2} ${x0+w-16},${cy2-5} ${x0+w-16},${cy2+5}" fill="#2a2" pointer-events="none"/>`;
+  colPx.forEach(cp=>{
+    const {x0,w,c,ci}=cp;
+    const rowTotal=c.cells.reduce((a,cc)=>a+cc.hFrac,0)||1;
+    let y=0;
+    const cellPx=c.cells.map(cc=>{ const h=(cc.hFrac/rowTotal)*LAYOUT_CH; const px={y0:y,h,open:cc.open}; y+=h; return px; });
+    cellPx.forEach((rp,ri)=>{
+      const {y0,h,open}=rp;
+      const ix=x0+1, iy=y0+1, icw=Math.max(1,w-2), ich=Math.max(1,h-2);
+      const cx=ix+icw/2, cy=iy+ich/2;
+      svg+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${open?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutCellClick(${ci},${ri})"/>`;
+      if(!open){ svg+=`<line x1="${ix+3}" y1="${iy+3}" x2="${ix+icw-3}" y2="${iy+ich-3}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${ix+icw-3}" y1="${iy+3}" x2="${ix+3}" y2="${iy+ich-3}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`; }
+      else { svg+=`<line x1="${ix+6}" y1="${iy+Math.min(ich-6,8)}" x2="${ix+icw-6}" y2="${cy}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${ix+icw-6},${cy} ${ix+icw-13},${cy-5} ${ix+icw-13},${cy+5}" fill="#2a2" pointer-events="none"/>`; }
+      if(ri<cellPx.length-1){
+        const sy=y0+h;
+        svg+=`<rect x="${x0+1}" y="${sy-4}" width="${Math.max(1,w-2)}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragSplit(event,${ci},${ri})"/>
+          <line x1="${x0+1}" y1="${sy}" x2="${x0+w-1}" y2="${sy}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
       }
-      svg+=`<rect x="${x0+1}" y="${splitY-4}" width="${Math.max(1,w-2)}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragSplit(event,${i})"/>
-        <line x1="${x0+1}" y1="${splitY}" x2="${x0+w-1}" y2="${splitY}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
-    }
-    svg+=`<text x="${x0+w/2}" y="${LAYOUT_CH+15}" font-size="9" text-anchor="middle" fill="#666">${Math.round((c.wFrac/total)*100)}% · ${layoutTypeLabel(c.type).split(' ')[0].replace('(','').replace(/[—,]/,'')}</text>`;
+    });
+    // per-column label + row controls, under the drawing
+    const cxMid=x0+w/2;
+    svg+=`<text x="${cxMid}" y="${LAYOUT_CH+13}" font-size="9" text-anchor="middle" fill="#666">${Math.round((c.wFrac/colTotal)*100)}% · ${c.cells.length} row${c.cells.length>1?'s':''}</text>
+      <text x="${cxMid-14}" y="${LAYOUT_CH+28}" font-size="12" font-weight="700" text-anchor="middle" fill="var(--accent,#3a7)" style="cursor:pointer" onclick="layoutAddRow(${ci})">[+row]</text>
+      <text x="${cxMid+16}" y="${LAYOUT_CH+28}" font-size="12" font-weight="700" text-anchor="middle" fill="${c.cells.length>1?'#c55':'#ccc'}" style="cursor:${c.cells.length>1?'pointer':'default'}" onclick="layoutRemoveRow(${ci})">[−row]</text>`;
   });
   for(let i=1;i<colPx.length;i++){
     const x=colPx[i].x0;
@@ -6313,10 +6323,10 @@ function layoutStartDragBoundary(ev,i){
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
-function layoutStartDragSplit(ev,i){
+function layoutStartDragSplit(ev,colIdx,cellIdx){
   ev.preventDefault();
   const svgEl=ev.target.closest('svg'); if(!svgEl) return;
-  _layoutDrag={kind:'split',idx:i,rect:svgEl.getBoundingClientRect()};
+  _layoutDrag={kind:'split',colIdx,cellIdx,rect:svgEl.getBoundingClientRect()};
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
@@ -6336,8 +6346,17 @@ function layoutOnDragMove(ev){
     _layoutDraft[d.idx].wFrac=(pairSum-newLeftFrac)*total;
     renderLayoutCanvas();
   } else if(d.kind==='split'){
+    const col=_layoutDraft[d.colIdx]; if(!col) return;
     const yPx=Math.min(LAYOUT_CH-8,Math.max(8,ev.clientY-d.rect.top));
-    _layoutDraft[d.idx].splitTopFrac=Math.max(0.05,Math.min(0.95,yPx/LAYOUT_CH));
+    const yFracAbs=yPx/LAYOUT_CH;
+    const total=col.cells.reduce((a,c)=>a+c.hFrac,0)||1;
+    let cum=0; for(let k=0;k<d.cellIdx;k++) cum+=col.cells[k].hFrac/total;
+    const topStart=cum;
+    const pairSum=col.cells[d.cellIdx].hFrac/total + col.cells[d.cellIdx+1].hFrac/total;
+    let newTopFrac=yFracAbs-topStart;
+    newTopFrac=Math.max(0.03,Math.min(pairSum-0.03,newTopFrac));
+    col.cells[d.cellIdx].hFrac=newTopFrac*total;
+    col.cells[d.cellIdx+1].hFrac=(pairSum-newTopFrac)*total;
     renderLayoutCanvas();
   }
 }
@@ -6408,7 +6427,7 @@ function saveCatalogueItem(editCode){
   // Interlock Section comment), so it isn't collected or written for new/edited catalogue entries
   // either. Existing catalogue entries still carry a harmless, now-ignored interlockDouble:false/true
   // field; nothing reads it anymore so it's inert, not worth a migration to strip out.
-  const layoutOverride={enabled:_layoutEnabled,columns:(_layoutDraft||[]).map(c=>({wFrac:c.wFrac,type:c.type,splitTopFrac:c.splitTopFrac}))};
+  const layoutOverride={enabled:_layoutEnabled,columns:(_layoutDraft||[]).map(c=>({wFrac:c.wFrac,cells:(c.cells||[]).map(cc=>({hFrac:cc.hFrac,open:!!cc.open}))}))};
   const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
@@ -7028,25 +7047,41 @@ function dsGeometry(w){
     // invariant across any real instance's OW/OH — re-normalized here in case stored fractions don't
     // sum to exactly 1 (manual edits, rounding).
     if(ov && ov.enabled && Array.isArray(ov.columns) && ov.columns.length){
+      // legacyColCells: columns saved by an earlier build of the editor (before "Add Row" let a
+      // column hold any number of cells) stored a single type+splitTopFrac instead of a cells[]
+      // array — convert those to the same {hFrac,open} shape on read so old saved overrides keep
+      // rendering exactly as they did, with no migration needed.
+      const legacyColCells=c=>{
+        const topFrac=Math.min(0.99,Math.max(0.01,num(c.splitTopFrac)||0.5));
+        if(c.type==='shutter') return [{hFrac:1,open:true}];
+        if(c.type==='split-top-open') return [{hFrac:topFrac,open:true},{hFrac:1-topFrac,open:false}];
+        if(c.type==='split-bottom-open') return [{hFrac:topFrac,open:false},{hFrac:1-topFrac,open:true}];
+        return [{hFrac:1,open:false}];
+      };
       let fracs=ov.columns.map(c=>Math.max(0.01,num(c.wFrac)||0));
       const fracSum=fracs.reduce((a,b)=>a+b,0)||1;
       fracs=fracs.map(f=>f/fracSum);
       columns=ov.columns.map((c,i)=>{
         const cw=Math.max(1,Math.round(fracs[i]*wMm));
-        const type=c.type||'fixed';
-        const topFrac=Math.min(0.99,Math.max(0.01,num(c.splitTopFrac)||0.5));
-        if(type==='shutter') return {wMm:cw,cells:[{hMm,open:true}]};
-        if(type==='split-top-open'){ const topMm=Math.max(1,Math.round(topFrac*hMm)); return {wMm:cw,cells:[{hMm:topMm,open:true},{hMm:Math.max(1,hMm-topMm),open:false}]}; }
-        if(type==='split-bottom-open'){ const topMm=Math.max(1,Math.round(topFrac*hMm)); return {wMm:cw,cells:[{hMm:topMm,open:false},{hMm:Math.max(1,hMm-topMm),open:true}]}; }
-        return {wMm:cw,cells:[{hMm,open:false}]}; // 'fixed'
+        const cellDefs=(Array.isArray(c.cells)&&c.cells.length)?c.cells:legacyColCells(c);
+        let hFracs=cellDefs.map(cd=>Math.max(0.01,num(cd.hFrac)||0));
+        const hSum=hFracs.reduce((a,b)=>a+b,0)||1;
+        hFracs=hFracs.map(f=>f/hSum);
+        const cells=cellDefs.map((cd,j)=>({hMm:Math.max(1,Math.round(hFracs[j]*hMm)),open:!!cd.open}));
+        const sumH=cells.reduce((a,cc)=>a+cc.hMm,0);
+        if(cells.length) cells[cells.length-1].hMm=Math.max(1,cells[cells.length-1].hMm+(hMm-sumH));
+        return {wMm:cw,cells};
       });
       const sumW=columns.reduce((a,c)=>a+c.wMm,0);
       if(columns.length) columns[columns.length-1].wMm=Math.max(1,columns[columns.length-1].wMm+(wMm-sumW));
       colsMm=columns.map(c=>c.wMm);
       nShOpen=columns.reduce((a,c)=>a+c.cells.filter(x=>x.open).length,0);
       if(rawSec.length<2){
-        const splitDef=ov.columns.find(c=>c.type==='split-top-open'||c.type==='split-bottom-open');
-        if(splitDef){ const topFrac=Math.min(0.99,Math.max(0.01,num(splitDef.splitTopFrac)||0.5)); const topMm=Math.max(1,Math.round(topFrac*hMm)); rowsMm=[topMm,Math.max(1,hMm-topMm)]; rowsTotalMm=hMm; }
+        // height ruler reflects whichever column has the most rows (the most informative split);
+        // ties broken by first occurrence. A single-cell layout falls back to one full-height row.
+        let best=null;
+        columns.forEach(c=>{ if(c.cells.length>1 && (!best||c.cells.length>best.cells.length)) best=c; });
+        if(best){ rowsMm=best.cells.map(cc=>cc.hMm); rowsTotalMm=hMm; }
         else { rowsMm=[hMm]; rowsTotalMm=hMm; }
       }
     } else {
