@@ -6807,6 +6807,211 @@ function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):
   setTimeout(()=>{ const s=document.getElementById('haHandleSel'); if(s){s.value=k;renderHandleAccTable();} },100); }
 
 /* ============================ PRINT ============================ */
+/* dsGeometry(w): single geometry source of truth for the Design Summary — column widths (mm),
+   row heights (mm), and which grid cells are openable, computed directly from the SAME fields the
+   pricing engine (calcWindow) already uses for this window: w.nShutters for sliding/casement panel
+   count, w.fCols/w.fRows (Mullions/Transoms) for 'fixed' windows, the catalogue's own Divider Qty +
+   Direction for other combo types, and w.sectionHeights for an explicit unequal-row override. Both
+   the elevation drawing (elevationSVG) and the dimension rulers in doPrint's 'ds' mode read from this
+   one function's output, so they can never disagree with each other, and the grid matches the data
+   the quote was actually priced on — see calcWindow's own _nCols/_nRows (Bidding Section) and
+   fCols/fRows (Mullion/Transom Section) for the pricing-side equivalents this mirrors. */
+function dsGeometry(w){
+  const d=dimsOf(w);
+  const OW=d.OW||1, OH=d.OH||1, SH=d.SH||OH, SW=d.SW||OW;
+  const wMm=toMm(OW), hMm=toMm(OH), shMm=toMm(SH), swMm=toMm(SW);
+  const wtype=w.wtype||'casement';
+  const isSlidingLike=(wtype==='sliding'||wtype==='sliding+fixed');
+
+  // ---- rows (mm) ----
+  const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
+  let rowsMm, rowsTotalMm;
+  if(rawSec.length>=2){
+    rowsMm=rawSec.slice();
+    rowsTotalMm=rowsMm.reduce((a,b)=>a+b,0)||hMm;
+  } else if(wtype==='fixed'){
+    const fRows=Math.max(0,num(w.fRows)||0), nR=fRows+1;
+    const base=Math.floor(hMm/nR), rem=hMm-base*nR;
+    rowsMm=Array.from({length:nR},(_,i)=>base+(i<rem?1:0));
+    rowsTotalMm=hMm;
+  } else {
+    rowsMm=[hMm]; rowsTotalMm=hMm;
+  }
+
+  // ---- columns (mm) + optional per-column cell split ----
+  let colsMm, colsTotalMm=wMm, nShOpen, columns=null;
+  if(isSlidingLike){
+    const nSh=Math.max(1,num(w.nShutters)||2);
+    const base=Math.floor(wMm/nSh), rem=wMm-base*nSh;
+    colsMm=Array.from({length:nSh},(_,i)=>base+(i<rem?1:0));
+    nShOpen=nSh;
+  } else if(wtype==='fixed'){
+    const fCols=Math.max(0,num(w.fCols)||0), nC=fCols+1;
+    const base=Math.floor(wMm/nC), rem=wMm-base*nC;
+    colsMm=Array.from({length:nC},(_,i)=>base+(i<rem?1:0));
+    nShOpen=0;
+  } else {
+    const cat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+    const divRows=(cat&&Array.isArray(cat.dividers))?cat.dividers:[];
+    // Per-row divider components can describe a LOCAL transom pattern the aggregate dividerQty/
+    // dividerDir field cannot: a full-height vertical divider (formula "OH") sets the real column
+    // count, while a horizontal divider whose formula is "SW" (shutter width, not the full "OW")
+    // only cuts across a shutter column, splitting it into a fixed strip + an operable shutter —
+    // not a uniform grid cell. Confirmed against a real catalogue example (PSG-B8L-37209: D1
+    // horizontal qty2 formula SW, D2 vertical qty2 formula OH => 3 columns, the two outer ones
+    // each split into [shutter-top, fixed-bottom], middle column plain fixed, full height).
+    const normF=f=>String(f||'').replace(/\s+/g,'').toUpperCase();
+    const vFullQty=divRows.filter(r=>r.dir==='vertical'&&normF(r.formula)==='OH').reduce((a,r)=>a+(num(r.qty)||0),0);
+    const hLocalQty=divRows.filter(r=>r.dir==='horizontal'&&normF(r.formula)==='SW').reduce((a,r)=>a+(num(r.qty)||0),0);
+    if(vFullQty>0 && hLocalQty>0){
+      const nCols=vFullQty+1;
+      const splitCount=Math.max(0,Math.min(hLocalQty,nCols));
+      const plainCount=nCols-splitCount;
+      const splitLeft=Math.ceil(splitCount/2), splitRight=splitCount-splitLeft;
+      const order=[];
+      for(let i=0;i<splitLeft;i++) order.push(true);
+      for(let i=0;i<plainCount;i++) order.push(false);
+      for(let i=0;i<splitRight;i++) order.push(true);
+      const plainWMm=plainCount>0?Math.max(1,Math.round((wMm-splitCount*swMm)/plainCount)):0;
+      columns=order.map(isSplit=>isSplit
+        ? {wMm:swMm, cells:[{hMm:shMm,open:true},{hMm:Math.max(1,hMm-shMm),open:false}]}
+        : {wMm:plainWMm, cells:[{hMm,open:false}]});
+      const sumW=columns.reduce((a,c)=>a+c.wMm,0);
+      if(columns.length) columns[columns.length-1].wMm=Math.max(1,columns[columns.length-1].wMm+(wMm-sumW));
+      colsMm=columns.map(c=>c.wMm);
+      nShOpen=splitCount;
+      if(rawSec.length<2){ rowsMm=[shMm,Math.max(1,hMm-shMm)]; rowsTotalMm=hMm; }
+    } else {
+      // existing aggregate dividerQty/dividerDir grid fallback (unchanged)
+      const dQty=Math.max(0,num(cat&&cat.dividerQty)||0);
+      const dDir=((cat&&cat.dividerDir)||'none').toLowerCase();
+      let nCols=1, nRowsFromDiv=1;
+      if(dQty>0){
+        if(dDir==='vertical') nCols=dQty+1;
+        else if(dDir==='horizontal') nRowsFromDiv=dQty+1;
+        else if(dDir==='both'){ const v=Math.floor(dQty/2),h=dQty-v; nCols=v+1; nRowsFromDiv=h+1; }
+      }
+      const base=Math.floor(wMm/nCols), rem=wMm-base*nCols;
+      colsMm=Array.from({length:nCols},(_,i)=>base+(i<rem?1:0));
+      nShOpen=Math.max(0,num(w.nShutters)||0);
+      if(rawSec.length<2 && nRowsFromDiv>1){
+        const base2=Math.floor(hMm/nRowsFromDiv), rem2=hMm-base2*nRowsFromDiv;
+        rowsMm=Array.from({length:nRowsFromDiv},(_,i)=>base2+(i<rem2?1:0));
+        rowsTotalMm=hMm;
+      }
+    }
+  }
+
+  const nCols=colsMm.length, nRows=rowsMm.length;
+  const openableGrid=[];
+  if(wtype==='fixed'){
+    for(let r=0;r<nRows;r++) openableGrid.push(Array.from({length:nCols},()=>false));
+  } else if(isSlidingLike){
+    for(let r=0;r<nRows;r++) openableGrid.push(Array.from({length:nCols},()=>r===nRows-1));
+  } else {
+    const openCount=Math.min(nCols*nRows,nShOpen);
+    let seen=0;
+    for(let r=0;r<nRows;r++){ const row=[]; for(let c=0;c<nCols;c++){ row.push(seen<openCount); seen++; } openableGrid.push(row); }
+  }
+
+  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns};
+}
+/* elevationSVG(geo,iW,iH): draws the actual window elevation (frame, each shutter/fixed cell, and the
+   mullion/transom lines between them) scaled into an iW×iH box from dsGeometry's own column/row mm
+   arrays — the same arrays the dimension rulers in doPrint's 'ds' mode render from, so the picture and
+   the arrows are mathematically the same geometry, never two disconnected pieces of art. Replaces the
+   catalogue's static per-code photo (catImgStatic) as the Design Summary's technical drawing only —
+   that photo is untouched everywhere else (catalogue grid, Quotation PDF thumbnail, openImg modal).
+   When geo.columns is set (a local-transom combo layout), each column carries its OWN cell list
+   (plain fixed columns stay a single full-height cell; split columns get [shutter-top, fixed-bottom])
+   instead of one shared rows×cols grid — so a transom line is only drawn across the column it belongs
+   to, never the full window width. */
+function elevationSVG(geo,iW,iH){
+  const {wtype,isSlidingLike}=geo;
+  if(geo.columns){
+    const colTot=geo.colsTotalMm||geo.wMm||1;
+    const colPx=[]; { let acc=0; geo.columns.forEach(col=>{ const cw=Math.max(1,Math.round(iW*col.wMm/colTot)); colPx.push({x0:acc,w:cw,col}); acc+=cw; });
+      if(colPx.length){ const last=colPx[colPx.length-1]; last.w=Math.max(1,last.w+(iW-acc)); } }
+    let cells='', dividers='';
+    colPx.forEach((cp,ci)=>{
+      const {x0,w:cw,col}=cp;
+      const rowTot=col.cells.reduce((a,c)=>a+c.hMm,0)||1;
+      const rowPx=[]; { let acc=0; col.cells.forEach(cell=>{ const ch=Math.max(1,Math.round(iH*cell.hMm/rowTot)); rowPx.push({y0:acc,h:ch,open:cell.open}); acc+=ch; });
+        if(rowPx.length){ const last=rowPx[rowPx.length-1]; last.h=Math.max(1,last.h+(iH-acc)); } }
+      rowPx.forEach((rp,ri)=>{
+        const {y0,h:ch,open}=rp;
+        const inset=1.5;
+        const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
+        const cx=ix+icw/2, cy=iy+ich/2;
+        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
+        if(!open){
+          cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
+            <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
+        } else {
+          const hingeLeft=(ci%2===0);
+          const az=Math.min(icw,ich)*0.18;
+          cells+= hingeLeft
+            ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+               <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
+            : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+               <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
+        }
+        if(ri<rowPx.length-1){ const y=y0+ch; dividers+=`<line x1="${x0}" y1="${y}" x2="${x0+cw}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
+      });
+      if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="0" x2="${x}" y2="${iH}" stroke="#222" stroke-width="2"/>`; }
+    });
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
+      <rect x="1" y="1" width="${iW-2}" height="${iH-2}" fill="none" stroke="#222" stroke-width="2.5"/>
+      ${cells}${dividers}
+    </svg>`;
+  }
+  const {colsMm,rowsMm,openableGrid}=geo;
+  const colTot=geo.colsTotalMm||geo.wMm||1, rowTot=geo.rowsTotalMm||geo.hMm||1;
+  const colPx=[]; { let acc=0; colsMm.forEach(mmv=>{ const cw=Math.max(1,Math.round(iW*mmv/colTot)); colPx.push({x0:acc,w:cw}); acc+=cw; });
+    if(colPx.length){ const last=colPx[colPx.length-1]; last.w=Math.max(1,last.w+(iW-acc)); } }
+  const rowPx=[]; { let acc=0; rowsMm.forEach(mmv=>{ const ch=Math.max(1,Math.round(iH*mmv/rowTot)); rowPx.push({y0:acc,h:ch}); acc+=ch; });
+    if(rowPx.length){ const last=rowPx[rowPx.length-1]; last.h=Math.max(1,last.h+(iH-acc)); } }
+  let cells='';
+  for(let r=0;r<rowPx.length;r++){
+    for(let c=0;c<colPx.length;c++){
+      const {x0,w:cw}=colPx[c], {y0,h:ch}=rowPx[r];
+      const open=(openableGrid[r]&&openableGrid[r][c])||false;
+      const inset=1.5;
+      const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
+      const cx=ix+icw/2, cy=iy+ich/2;
+      cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
+      if(!open||wtype==='fixed'){
+        cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
+          <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
+      } else if(isSlidingLike){
+        const ax=icw*0.16;
+        cells+=`<line x1="${cx-ax}" y1="${cy}" x2="${cx+ax}" y2="${cy}" stroke="#333" stroke-width="1"/>
+          <polygon points="${cx+ax},${cy} ${cx+ax-4},${cy-3} ${cx+ax-4},${cy+3}" fill="#333"/>`;
+      } else if(wtype.indexOf('awning')===0){
+        const az=Math.min(icw,ich)*0.18;
+        cells+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
+          <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
+          <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1"/>
+          <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222"/>`;
+      } else {
+        const hingeLeft=(c%2===0);
+        const az=Math.min(icw,ich)*0.18;
+        cells+= hingeLeft
+          ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+             <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
+          : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+             <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
+      }
+    }
+  }
+  let dividers='';
+  for(let c=1;c<colPx.length;c++){ const x=colPx[c].x0; dividers+=`<line x1="${x}" y1="0" x2="${x}" y2="${iH}" stroke="#222" stroke-width="2"/>`; }
+  for(let r=1;r<rowPx.length;r++){ const y=rowPx[r].y0; dividers+=`<line x1="0" y1="${y}" x2="${iW}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
+    <rect x="1" y="1" width="${iW-2}" height="${iH-2}" fill="none" stroke="#222" stroke-width="2.5"/>
+    ${cells}${dividers}
+  </svg>`;
+}
 function winDiagramSVG(w,maxW,maxH){
   const d=dimsOf(w); const OH=d.OH||1, OW=d.OW||1;
   const ratio=OH/OW;
@@ -7068,28 +7273,25 @@ function doPrint(id,mode){
       while(row.length<3) row.push(null);
       return `<tr>${row.map((w,ci)=>{
         if(!w) return `<td style="border:1px solid #333;width:33%"></td>`;
-        const d=dimsOf(w);
-        const OW=d.OW||1,OH=d.OH||1,SH=d.SH||OH,SW=d.SW||OW;
-        const wMm=toMm(OW),hMm=toMm(OH),swMm=toMm(SW);
+        const geo=dsGeometry(w);
+        const wMm=geo.wMm,hMm=geo.hMm;
         const wtype=w.wtype||'casement';
-        const nShW=Math.max(1,num(w.nShutters)||1);
-        const wSegsMm=(nShW>=2)?(()=>{const base=Math.floor(wMm/nShW),rem=wMm-base*nShW;return Array.from({length:nShW},(_,i)=>base+(i<rem?1:0));})():null;
-        const cat=DB.rates.catalogue.find(x=>x.code===w.code)||DB.rates.catalogue.find(x=>x.code===w.series);
         // Fixed image box: always 90×115px
         const iW=90,iH=115;
-        const picHtml=catImgStatic(w&&w.code||'',cat)
-          ?`<img src="${catImgStatic(w&&w.code||'',cat)}" style="width:${iW}px;height:${iH}px;object-fit:contain;display:block;border:1px solid #bbb;background:#f8f8f8">`
-          :winDiagramSVG(w,iW,iH);
+        // Technical drawing: always the geometry-driven SVG elevation (built from the SAME column/row
+        // mm arrays as the dimension rulers below), never the catalogue's static per-code photo — see
+        // dsGeometry/elevationSVG. The uploaded catalogue PNG is untouched everywhere else (catalogue
+        // grid, Quotation PDF thumbnail, openImg modal) via catImg()/catImgStatic(), just not used here.
+        const picHtml=elevationSVG(geo,iW,iH);
         const idx=ws.indexOf(w);
         const wLabel=w.name||('W-'+String(idx+1).padStart(2,'0'));
-        // --- Isolated SVG for HEIGHT dimension (left side) ---
+        // --- Isolated SVG for HEIGHT dimension (left side) — rows come from dsGeometry, the same
+        // source used to draw the picture above, so the ruler can never drift from the elevation. ---
         const DH=22; // width of height-dim SVG column
-        const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
-        const multiSec=rawSec.length>=2;
+        const rowsMm=geo.rowsMm, rowsTotal=geo.rowsTotalMm||hMm;
         let heightSvg;
-        if(multiSec){
-          const total=rawSec.reduce((a,b)=>a+b,0)||OH;
-          const segs=rawSec.map(h=>({h,px:Math.round(iH*h/total)}));
+        if(rowsMm.length>=2){
+          const segs=rowsMm.map(h=>({h,px:Math.round(iH*h/(rowsTotal||1))}));
           const ah=5; // arrowhead size
           const lx=DH-6; // x of vertical line
           let s=`<line x1="${lx}" y1="0" x2="${lx}" y2="${iH}" stroke="#cc0000" stroke-width="1.5"/>`;
@@ -7123,19 +7325,20 @@ function doPrint(id,mode){
         // --- Isolated SVG for WIDTH dimension (top) ---
         const DW=16; // height of width-dim SVG row
         const ah2=5;
+        const colsMm=geo.colsMm, colsTotal=geo.colsTotalMm||wMm;
         let wSvg;
-        if(wSegsMm){
+        if(colsMm.length>=2){
           const ly=DW-4;
           let s=`<line x1="0" y1="${ly}" x2="${iW}" y2="${ly}" stroke="#cc0000" stroke-width="1.5"/>`;
           s+=`<polygon points="0,${ly} ${ah2},${ly-3} ${ah2},${ly+3}" fill="#cc0000"/>`;
           s+=`<polygon points="${iW},${ly} ${iW-ah2},${ly-3} ${iW-ah2},${ly+3}" fill="#cc0000"/>`;
           let cx=0;
-          wSegsMm.forEach((segMm,si)=>{
-            const segPx=Math.round(iW*segMm/(wMm||1));
+          colsMm.forEach((segMm,si)=>{
+            const segPx=Math.round(iW*segMm/(colsTotal||1));
             const mid=cx+segPx/2;
             s+=`<text x="${mid}" y="${ly-5}" text-anchor="middle" font-family="Arial" font-size="8" font-weight="700" fill="#cc0000">${segMm}</text>`;
             cx+=segPx;
-            if(si<wSegsMm.length-1){
+            if(si<colsMm.length-1){
               s+=`<line x1="${cx}" y1="${ly-5}" x2="${cx}" y2="${ly+5}" stroke="#cc0000" stroke-width="1.5"/>`;
             }
           });
