@@ -6063,9 +6063,20 @@ function openAddCatalogueItem(editCode){
   const allCats=[...new Set([...DB.rates.catalogue.map(c=>c.category),'Casement','Fixed','Sliding','Awning','Door'])];
   const autoCode=editCode?(existing?existing.code:''):genCatalogueCode();
   _layoutEnabled=!!(existing && existing.layoutOverride && existing.layoutOverride.enabled);
-  _layoutDraft=(existing && existing.layoutOverride && Array.isArray(existing.layoutOverride.columns) && existing.layoutOverride.columns.length)
-    ? existing.layoutOverride.columns.map(c=>({...c}))
-    : layoutDefaultCols();
+  _viewFromOutsideDraft=!!(existing && existing.viewFromOutside);
+  _gridSelected=new Set();
+  { const ov=existing&&existing.layoutOverride;
+    if(ov && ov.grid && Array.isArray(ov.grid.cells) && ov.grid.cells.length){
+      _gridDraft={colFracs:ov.grid.colFracs.slice(),rowFracs:ov.grid.rowFracs.slice(),cells:ov.grid.cells.map(c=>({...c}))};
+    } else if(ov && Array.isArray(ov.columns) && ov.columns.length){
+      // Upconvert a pre-merge-editor override (independent per-column row splits) into the new
+      // uniform grid the first time this code is opened in the rebuilt editor — see
+      // legacyColumnsToGrid's comment for how misaligned column row-splits are reconciled.
+      _gridDraft=legacyColumnsToGrid(ov.columns);
+    } else {
+      _gridDraft=layoutGridDefault();
+    }
+  }
   showModal(`<div class="hd"><h3>${editCode?'Edit':'Add'} Window Type</h3><button class="ghost sm" onclick="closeModal()">✕</button></div>
    <div class="bd" style="display:flex;flex-direction:column;gap:12px">
      <div class="f2">
@@ -6185,57 +6196,190 @@ function addCatDivRow(){
 }
 function removeCatDivRow(i){ _catDivDraft.splice(i,1); refreshCatDivUI(); }
 function updateCatDivRow(i,key,val){ if(!_catDivDraft[i]) return; _catDivDraft[i][key]=key==='qty'?num(val):val; catFormulaPreview(); }
-/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
-   drives directly (click a panel to cycle its type, drag the dividing lines to resize) instead of
-   divider-formula guessing. Mirrors the _catDivDraft pattern used by Divider Components above:
-   _layoutDraft is the working copy, edited in place, read back by saveCatalogueItem on save.
-   dsGeometry consumes the saved layoutOverride (see its "ov.enabled" branch) ahead of every other
-   heuristic (local-transom divider rows, then the aggregate dividerQty/dividerDir grid) whenever
-   enabled, so pricing (which still reads dividerQty/dividerDir/dividers[] untouched) is unaffected —
-   this only changes what the Design Summary drawing shows. */
-/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
-   drives directly (click a cell to toggle Fixed/Shutter, drag lines to resize, Add/Remove Row to
-   split a column into any number of stacked cells) instead of divider-formula guessing. Mirrors the
-   _catDivDraft pattern used by Divider Components above: _layoutDraft is the working copy, edited in
-   place, read back by saveCatalogueItem on save. Each column is {wFrac, cells:[{hFrac,open}]} — any
-   number of cells per column, independent of every other column, so one column can have 3 rows while
-   its neighbor has 1. dsGeometry consumes the saved layoutOverride (see its "ov.enabled" branch)
-   ahead of every other heuristic whenever enabled, so pricing (still reading dividerQty/dividerDir/
-   dividers[] untouched) is unaffected — this only changes what the Design Summary drawing shows. */
-/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
-   drives directly (click a cell to toggle Fixed/Shutter, drag lines to resize, Add Row / merge rows
-   with Remove Row) instead of divider-formula guessing. Mirrors the _catDivDraft pattern used by
-   Divider Components above: _layoutDraft is the working copy, edited in place, read back by
-   saveCatalogueItem on save. Each column is {wFrac, cells:[{hFrac,open}]} — any number of cells per
-   column, independent of every other column. dsGeometry consumes the saved layoutOverride (see its
-   "ov.enabled" branch) ahead of every other heuristic whenever enabled, so pricing (still reading
+/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a true rows×cols grid-with-merged-
+   cells editor. Each cell is {r0,c0,r1,c1,open} and the full cells[] array always exactly tiles the
+   colFracs.length x rowFracs.length grid (no gaps, no overlaps). Unlike the earlier column-primary
+   model (every column spanning the full window height), merging here can combine ANY rectangular
+   set of adjacent cells — across rows, across columns, or both — e.g. two fixed panels side by side
+   in different columns merge into one true full-width fixed panel with no stray divider line through
+   it. Selection is via a small square "chip" in each cell's corner (its own onclick, separate from
+   the cell body's Fixed/Shutter toggle and from the resize strips) — the same "give it its own
+   always-clickable handle" fix that solved the old single-pair merge's click/drag race. Mirrors the
+   _catDivDraft pattern used by Divider Components above: _gridDraft is the working copy, edited in
+   place, read back by saveCatalogueItem on save as layoutOverride.grid. dsGeometry consumes it (see
+   its "ov.grid" branch) ahead of every other heuristic whenever enabled, so pricing (still reading
    dividerQty/dividerDir/dividers[] untouched) is unaffected — this only changes the Design Summary
-   drawing. Selection model: clicking a cell (which also toggles it Fixed/Shutter) marks its column as
-   the "+ Add Row" target; clicking — not dragging — a row-boundary line selects that exact pair for
-   "− Remove Row" (merge); a real drag on that same line still resizes as before. */
-/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
-   drives directly (click a cell to toggle Fixed/Shutter, drag lines to resize, Add Row / merge rows
-   with Remove Row) instead of divider-formula guessing. Mirrors the _catDivDraft pattern used by
-   Divider Components above: _layoutDraft is the working copy, edited in place, read back by
-   saveCatalogueItem on save. Each column is {wFrac, cells:[{hFrac,open}]} — any number of cells per
-   column, independent of every other column. dsGeometry consumes the saved layoutOverride (see its
-   "ov.enabled" branch) ahead of every other heuristic whenever enabled, so pricing (still reading
-   dividerQty/dividerDir/dividers[] untouched) is unaffected — this only changes the Design Summary
-   drawing. Selection model: clicking a cell (which also toggles it Fixed/Shutter) marks its column as
-   the "+ Add Row" target. Merge-select has its own small circle handle on every row boundary — a
-   plain onclick, separate from the full-width drag strip used to resize — so picking a boundary for
-   "− Remove Row" never races against a real mouse's few px of click jitter on a thin 8px strip (the
-   earlier design tried to tell a click from a drag on that same strip, which is exactly why it was
-   unreliable: a real click almost always moves a couple of px, which either got read as a no-op drag
-   or missed onto the cell above/below). */
-let _layoutDraft=[]; // [{wFrac,cells:[{hFrac,open}]}]
-let _layoutEnabled=false;
-let _layoutDrag=null;
-let _selectedCol=null;       // column index "+ Add Row" targets; null = last column
-let _selectedBoundary=null;  // {colIdx,cellIdx} the boundary "− Remove Row" (merge) targets; null = last boundary of _selectedCol
-const LAYOUT_CW=320, LAYOUT_CH=200, LAYOUT_LABEL_H=30;
+   drawing. A pre-existing override saved in the old columns[] format upconverts to this grid the
+   first time its code is opened here (legacyColumnsToGrid) and keeps rendering unchanged until then
+   (dsGeometry's separate, untouched "ov.columns" branch). */
+// Grid-with-merged-cells model for the "Elevation Layout Override" editor.
+// Replaces the old column-primary model (every column spans full height) so the user can merge
+// ANY set of adjacent cells — across rows, across columns, or both — not just two rows within one
+// column. Saved shape: {enabled, grid:{colFracs:[...], rowFracs:[...], cells:[{r0,c0,r1,c1,open}]}}.
+// cells[] must always exactly tile the colFracs.length x rowFracs.length grid: no gaps, no overlaps.
 
-function layoutDefaultCols(){ return [{wFrac:1,cells:[{hFrac:1,open:false}]}]; }
+let _layoutEnabled=false;
+let _viewFromOutsideDraft=false; // cat.viewFromOutside — "Viewed from Outside" checkbox
+let _gridDraft=null; // {colFracs,rowFracs,cells}
+let _gridSelected=new Set(); // indices into _gridDraft.cells, cleared on every structural change
+let _layoutDrag=null;
+const LAYOUT_CW=320, LAYOUT_CH=200, LAYOUT_LABEL_H=16;
+
+function layoutGridDefault(){
+  return {colFracs:[1], rowFracs:[1], cells:[{r0:0,c0:0,r1:1,c1:1,open:false}]};
+}
+
+// Oldest enum format (pre-dates even the per-column cells[] array).
+function legacyColCells(c){
+  const topFrac=Math.min(0.99,Math.max(0.01,Number(c.splitTopFrac)||0.5));
+  if(c.type==='shutter') return [{hFrac:1,open:true}];
+  if(c.type==='split-top-open') return [{hFrac:topFrac,open:true},{hFrac:1-topFrac,open:false}];
+  if(c.type==='split-bottom-open') return [{hFrac:topFrac,open:false},{hFrac:1-topFrac,open:true}];
+  return [{hFrac:1,open:false}];
+}
+
+// Upconvert the old column-primary format (each column has its OWN independent row split) into
+// the new uniform grid: union every column's cumulative row-boundary fractions into one master
+// row-line set, then re-express each column's original cells as spans over those master rows.
+// Boundaries are rounded to 4 decimals before dedup so near-identical float splits (e.g. from two
+// columns dragged to "the same" position) collapse into a single shared grid line instead of
+// producing a sliver extra row.
+function legacyColumnsToGrid(columns){
+  const ROUND=f=>Math.round(f*10000)/10000;
+  const colFracsRaw=columns.map(c=>Math.max(0.0001,Number(c.wFrac)||0));
+  const colSum=colFracsRaw.reduce((a,b)=>a+b,0)||1;
+  const colFracs=colFracsRaw.map(f=>f/colSum);
+  const perColCells=columns.map(c=>{
+    const cellDefs=(Array.isArray(c.cells)&&c.cells.length)?c.cells:legacyColCells(c);
+    const hFracsRaw=cellDefs.map(cd=>Math.max(0.0001,Number(cd.hFrac)||0));
+    const hSum=hFracsRaw.reduce((a,b)=>a+b,0)||1;
+    let cum=0;
+    return cellDefs.map((cd,i)=>{
+      const top=cum; cum+=hFracsRaw[i]/hSum;
+      return {top:ROUND(top),bottom:ROUND(cum),open:!!cd.open};
+    });
+  });
+  const boundarySet=new Set([0,1]);
+  perColCells.forEach(cells=>cells.forEach(cc=>{ boundarySet.add(cc.top); boundarySet.add(cc.bottom); }));
+  const boundaries=Array.from(boundarySet).sort((a,b)=>a-b);
+  const rowFracs=[]; for(let i=1;i<boundaries.length;i++) rowFracs.push(boundaries[i]-boundaries[i-1]);
+  const nRows=rowFracs.length;
+  const findIdx=v=>{ let best=0,bestD=Infinity; for(let i=0;i<boundaries.length;i++){ const d=Math.abs(boundaries[i]-v); if(d<bestD){bestD=d;best=i;} } return best; };
+  const cells=[];
+  perColCells.forEach((colCells,ci)=>{
+    colCells.forEach(cc=>{
+      const r0=findIdx(cc.top), r1=findIdx(cc.bottom);
+      if(r1>r0) cells.push({r0,c0:ci,r1,c1:ci+1,open:cc.open});
+    });
+  });
+  if(!cells.length) return layoutGridDefault();
+  return {colFracs, rowFracs: rowFracs.length?rowFracs:[1], cells};
+}
+
+function layoutClampSelection(){
+  const maxIdx=_gridDraft.cells.length-1;
+  _gridSelected.forEach(i=>{ if(i<0||i>maxIdx) _gridSelected.delete(i); });
+}
+
+function layoutAddCol(){
+  const g=_gridDraft;
+  if(g.colFracs.length>=8){ if(typeof toast==='function') toast('Max 8 columns'); return; }
+  const n=g.colFracs.length+1;
+  g.colFracs=g.colFracs.map(f=>f*(n-1)/n); g.colFracs.push(1/n);
+  const newCi=n-1;
+  for(let r=0;r<g.rowFracs.length;r++) g.cells.push({r0:r,c0:newCi,r1:r+1,c1:newCi+1,open:false});
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutRemoveCol(){
+  const g=_gridDraft;
+  if(g.colFracs.length<=1) return;
+  const lastIdx=g.colFracs.length-1;
+  g.colFracs.pop();
+  const sum=g.colFracs.reduce((a,b)=>a+b,0)||1; g.colFracs=g.colFracs.map(f=>f/sum);
+  const newCells=[];
+  g.cells.forEach(c=>{
+    if(c.c0>=lastIdx) return; // was entirely inside the removed column
+    newCells.push({...c, c1:Math.min(c.c1,lastIdx)});
+  });
+  g.cells=newCells;
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutAddRow(){
+  const g=_gridDraft;
+  if(g.rowFracs.length>=8){ if(typeof toast==='function') toast('Max 8 rows'); return; }
+  const n=g.rowFracs.length+1;
+  g.rowFracs=g.rowFracs.map(f=>f*(n-1)/n); g.rowFracs.push(1/n);
+  const newRi=n-1;
+  for(let c=0;c<g.colFracs.length;c++) g.cells.push({r0:newRi,c0:c,r1:newRi+1,c1:c+1,open:false});
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutRemoveRow(){
+  const g=_gridDraft;
+  if(g.rowFracs.length<=1) return;
+  const lastIdx=g.rowFracs.length-1;
+  g.rowFracs.pop();
+  const sum=g.rowFracs.reduce((a,b)=>a+b,0)||1; g.rowFracs=g.rowFracs.map(f=>f/sum);
+  const newCells=[];
+  g.cells.forEach(c=>{
+    if(c.r0>=lastIdx) return;
+    newCells.push({...c, r1:Math.min(c.r1,lastIdx)});
+  });
+  g.cells=newCells;
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutCellClick(idx){
+  const c=_gridDraft.cells[idx]; if(!c) return;
+  c.open=!c.open;
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutToggleSelect(idx){
+  if(_gridSelected.has(idx)) _gridSelected.delete(idx); else _gridSelected.add(idx);
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+}
+function layoutMergeSelected(){
+  const idxs=Array.from(_gridSelected);
+  if(idxs.length<2){ if(typeof toast==='function') toast('Select 2 or more cells to merge'); return false; }
+  const g=_gridDraft;
+  const sel=idxs.map(i=>g.cells[i]).filter(Boolean);
+  if(sel.length!==idxs.length) return false;
+  const r0=Math.min(...sel.map(c=>c.r0)), r1=Math.max(...sel.map(c=>c.r1));
+  const c0=Math.min(...sel.map(c=>c.c0)), c1=Math.max(...sel.map(c=>c.c1));
+  const selArea=sel.reduce((a,c)=>a+(c.r1-c.r0)*(c.c1-c.c0),0);
+  const bboxArea=(r1-r0)*(c1-c0);
+  if(selArea!==bboxArea){ if(typeof toast==='function') toast('Selected cells must form a rectangle with no gaps'); return false; }
+  const merged={r0,c0,r1,c1,open:sel.every(c=>c.open)};
+  const idxSet=new Set(idxs);
+  g.cells=g.cells.filter((c,i)=>!idxSet.has(i));
+  g.cells.push(merged);
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+  return true;
+}
+function layoutSplitSelected(){
+  const idxs=Array.from(_gridSelected);
+  if(idxs.length!==1){ if(typeof toast==='function') toast('Select exactly one merged cell to split'); return false; }
+  const g=_gridDraft;
+  const idx=idxs[0], cell=g.cells[idx]; if(!cell) return false;
+  if(cell.r1-cell.r0<=1 && cell.c1-cell.c0<=1){ if(typeof toast==='function') toast('That cell is not merged'); return false; }
+  const newCells=[];
+  for(let r=cell.r0;r<cell.r1;r++) for(let c=cell.c0;c<cell.c1;c++) newCells.push({r0:r,c0:c,r1:r+1,c1:c+1,open:cell.open});
+  g.cells.splice(idx,1,...newCells);
+  _gridSelected.clear();
+  if(typeof renderLayoutCanvas==='function') renderLayoutCanvas();
+  return true;
+}
+
+function layoutToggleEnabled(checked){
+  _layoutEnabled=checked;
+  const ed=document.getElementById('ncLayoutEditor');
+  if(ed) ed.style.display=checked?'':'none';
+  if(checked && (!_gridDraft||!_gridDraft.cells||!_gridDraft.cells.length)) _gridDraft=layoutGridDefault();
+  if(checked) renderLayoutCanvas();
+}
 
 function layoutEditorHTML(){
   return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--panel2)">
@@ -6248,6 +6392,9 @@ function layoutEditorHTML(){
       </label>
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:10px">Draw the real section layout for this code's Design Summary drawing directly — click a panel to toggle it Fixed/Shutter, drag any line to resize. This overrides Divider Qty/Direction and Divider Components above for the drawing only — pricing still uses those fields as normal.</div>
+    <label style="font-size:11px;display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--line)">
+      <input type="checkbox" id="ncViewOutside" ${_viewFromOutsideDraft?'checked':''}> Viewed from Outside <span class="muted" style="font-weight:400">(unchecked = Viewed from Inside, the default). Swaps the handle glyph to the mirrored outside view and changes the Design Summary caption.</span>
+    </label>
     <div id="ncLayoutEditor" style="${_layoutEnabled?'':'display:none'}">
       <div id="ncLayoutCanvasWrap" style="display:flex;justify-content:center;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:8px"></div>
       <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:6px">
@@ -6255,133 +6402,50 @@ function layoutEditorHTML(){
         <button type="button" class="ghost sm" onclick="layoutRemoveCol()">− Remove Column</button>
         <button type="button" class="ghost sm" onclick="layoutAddRow()">+ Add Row</button>
         <button type="button" class="ghost sm" onclick="layoutRemoveRow()">− Remove Row</button>
+        <button type="button" class="ghost sm" style="font-weight:700" onclick="layoutMergeSelected()">⬛ Merge Selected</button>
+        <button type="button" class="ghost sm" onclick="layoutSplitSelected()">⬜ Split Cell</button>
       </div>
-      <div class="muted" style="font-size:10px;text-align:center">Click a panel to toggle Fixed/Shutter and pick its column (outlined blue) for + Add Row. Click the small circle on a row line to pick that row split (it turns orange) for − Remove Row, which merges just those two rows. Drag a line (away from the circle) to resize.</div>
+      <div class="muted" style="font-size:10px;text-align:center">Click a panel to toggle Fixed/Shutter. Click the small square in a panel's corner to select it (it turns orange) — select 2 or more panels that together form a rectangle, then press "Merge Selected" to combine them into one panel, even across rows AND columns. Select one merged panel and press "Split Cell" to undo. Drag a grid line to resize.</div>
     </div>
   </div>`;
-}
-
-function layoutToggleEnabled(checked){
-  _layoutEnabled=checked;
-  const ed=document.getElementById('ncLayoutEditor');
-  if(ed) ed.style.display=checked?'':'none';
-  if(checked && (!_layoutDraft||!_layoutDraft.length)) _layoutDraft=layoutDefaultCols();
-  if(checked) renderLayoutCanvas();
-}
-
-function layoutClampSelection(){
-  if(_selectedCol!=null && (_selectedCol<0 || _selectedCol>=_layoutDraft.length)) _selectedCol=null;
-  if(_selectedBoundary){
-    const col=_layoutDraft[_selectedBoundary.colIdx];
-    if(!col || _selectedBoundary.cellIdx<0 || _selectedBoundary.cellIdx>=col.cells.length-1) _selectedBoundary=null;
-  }
-}
-
-function layoutAddCol(){
-  if(_layoutDraft.length>=8){ toast('Max 8 columns'); return; }
-  const n=_layoutDraft.length+1;
-  _layoutDraft.forEach(c=>c.wFrac=c.wFrac*(n-1)/n);
-  _layoutDraft.push({wFrac:1/n,cells:[{hFrac:1,open:false}]});
-  layoutClampSelection();
-  renderLayoutCanvas();
-}
-function layoutRemoveCol(){
-  if(_layoutDraft.length<=1) return;
-  _layoutDraft.pop();
-  const sum=_layoutDraft.reduce((a,c)=>a+c.wFrac,0)||1;
-  _layoutDraft.forEach(c=>c.wFrac=c.wFrac/sum);
-  layoutClampSelection();
-  renderLayoutCanvas();
-}
-function layoutCellClick(colIdx,cellIdx){
-  const col=_layoutDraft[colIdx]; if(!col||!col.cells[cellIdx]) return;
-  col.cells[cellIdx].open=!col.cells[cellIdx].open;
-  _selectedCol=colIdx;
-  renderLayoutCanvas();
-}
-function layoutSelectBoundary(colIdx,cellIdx){
-  const same=_selectedBoundary && _selectedBoundary.colIdx===colIdx && _selectedBoundary.cellIdx===cellIdx;
-  _selectedBoundary=same?null:{colIdx,cellIdx};
-  renderLayoutCanvas();
-}
-function layoutAddRow(){
-  const colIdx=(_selectedCol!=null)?_selectedCol:_layoutDraft.length-1;
-  const col=_layoutDraft[colIdx]; if(!col) return;
-  if(col.cells.length>=6){ toast('Max 6 rows per column'); return; }
-  const n=col.cells.length+1;
-  col.cells.forEach(c=>c.hFrac=c.hFrac*(n-1)/n);
-  col.cells.push({hFrac:1/n,open:false});
-  _selectedCol=colIdx;
-  _selectedBoundary=null;
-  renderLayoutCanvas();
-}
-function layoutRemoveRow(){
-  // Merge the specific adjacent pair picked via its boundary's circle handle; otherwise fall back
-  // to merging the last two rows of the Add-Row target column.
-  let colIdx, cellIdx;
-  if(_selectedBoundary){ colIdx=_selectedBoundary.colIdx; cellIdx=_selectedBoundary.cellIdx; }
-  else { colIdx=(_selectedCol!=null)?_selectedCol:_layoutDraft.length-1; cellIdx=null; }
-  const col=_layoutDraft[colIdx]; if(!col||col.cells.length<=1) return;
-  if(cellIdx==null) cellIdx=col.cells.length-2; // merge the last pair
-  const a=col.cells[cellIdx], b=col.cells[cellIdx+1];
-  if(!a||!b) return;
-  const merged={hFrac:a.hFrac+b.hFrac, open:a.open};
-  col.cells.splice(cellIdx,2,merged);
-  _selectedBoundary=null;
-  _selectedCol=colIdx;
-  renderLayoutCanvas();
 }
 
 function renderLayoutCanvas(){
   const wrap=document.getElementById('ncLayoutCanvasWrap');
   if(!wrap) return;
   layoutClampSelection();
-  const cols=_layoutDraft;
-  const colTotal=cols.reduce((a,c)=>a+c.wFrac,0)||1;
-  let x=0;
-  const colPx=cols.map((c,ci)=>{ const w=(c.wFrac/colTotal)*LAYOUT_CW; const px={x0:x,w,c,ci}; x+=w; return px; });
-  let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+LAYOUT_LABEL_H}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+LAYOUT_LABEL_H}" style="overflow:visible">
-    <rect x="1" y="1" width="${LAYOUT_CW-2}" height="${LAYOUT_CH-2}" fill="none" stroke="#222" stroke-width="2.5"/>`;
-  const handles=[]; // drawn last, on top of everything, so their small click target always wins
-  colPx.forEach(cp=>{
-    const {x0,w,c,ci}=cp;
-    const isSelCol=(ci===((_selectedCol!=null)?_selectedCol:cols.length-1));
-    const rowTotal=c.cells.reduce((a,cc)=>a+cc.hFrac,0)||1;
-    let y=0;
-    const cellPx=c.cells.map(cc=>{ const h=(cc.hFrac/rowTotal)*LAYOUT_CH; const px={y0:y,h,open:cc.open}; y+=h; return px; });
-    cellPx.forEach((rp,ri)=>{
-      const {y0,h,open}=rp;
-      const ix=x0+1, iy=y0+1, icw=Math.max(1,w-2), ich=Math.max(1,h-2);
-      const cx=ix+icw/2, cy=iy+ich/2;
-      svg+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${open?'#eaf9ef':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutCellClick(${ci},${ri})"/>`;
-      if(!open){ svg+=`<line x1="${ix+3}" y1="${iy+3}" x2="${ix+icw-3}" y2="${iy+ich-3}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${ix+icw-3}" y1="${iy+3}" x2="${ix+3}" y2="${iy+ich-3}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`; }
-      else { svg+=`<line x1="${ix+6}" y1="${iy+Math.min(ich-6,8)}" x2="${ix+icw-6}" y2="${cy}" stroke="#4a4" stroke-width="1.2" pointer-events="none"/><polygon points="${ix+icw-6},${cy} ${ix+icw-13},${cy-5} ${ix+icw-13},${cy+5}" fill="#2a2" pointer-events="none"/>`; }
-      if(ri<cellPx.length-1){
-        const sy=y0+h;
-        const isSelBnd=_selectedBoundary && _selectedBoundary.colIdx===ci && _selectedBoundary.cellIdx===ri;
-        svg+=`<rect x="${x0+1}" y="${sy-4}" width="${Math.max(1,w-2)}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragSplit(event,${ci},${ri})"/>
-          <line x1="${x0+1}" y1="${sy}" x2="${x0+w-1}" y2="${sy}" stroke="${isSelBnd?'#e07a1f':'#222'}" stroke-width="${isSelBnd?'3':'2'}" pointer-events="none"/>`;
-        handles.push({cx:x0+w/2, cy:sy, ci, ri, sel:isSelBnd});
-      }
-    });
-    if(isSelCol){
-      svg+=`<rect x="${x0+1.5}" y="2.5" width="${Math.max(1,w-3)}" height="${LAYOUT_CH-5}" fill="none" stroke="#2a66e0" stroke-width="2" stroke-dasharray="4,3" pointer-events="none"/>`;
-    }
-    const cxMid=x0+w/2;
-    svg+=`<text x="${cxMid}" y="${LAYOUT_CH+14}" font-size="9" text-anchor="middle" fill="${isSelCol?'#2a66e0':'#666'}" font-weight="${isSelCol?'700':'400'}">${Math.round((c.wFrac/colTotal)*100)}% · ${c.cells.length} row${c.cells.length>1?'s':''}</text>`;
+  const g=_gridDraft;
+  const nC=g.colFracs.length, nR=g.rowFracs.length;
+  const colB=[0]; { let acc=0; g.colFracs.forEach(f=>{ acc+=f*LAYOUT_CW; colB.push(acc); }); colB[colB.length-1]=LAYOUT_CW; }
+  const rowB=[0]; { let acc=0; g.rowFracs.forEach(f=>{ acc+=f*LAYOUT_CH; rowB.push(acc); }); rowB[rowB.length-1]=LAYOUT_CH; }
+
+  let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+LAYOUT_LABEL_H}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+LAYOUT_LABEL_H}" style="overflow:visible">`;
+  const chips=[]; // selection chips, drawn last so their small hit target always wins over the body/resize strips
+  g.cells.forEach((cell,idx)=>{
+    const x0=colB[cell.c0], x1=colB[cell.c1], y0=rowB[cell.r0], y1=rowB[cell.r1];
+    const w=x1-x0, h=y1-y0;
+    const selected=_gridSelected.has(idx);
+    svg+=`<rect x="${x0+1}" y="${y0+1}" width="${Math.max(1,w-2)}" height="${Math.max(1,h-2)}" fill="${cell.open?'#bff3f6':'#eaf4ff'}" stroke="none" style="cursor:pointer" onclick="layoutCellClick(${idx})"/>`;
+    const cx=x0+w/2, cy=y0+h/2;
+    if(!cell.open){ svg+=`<line x1="${x0+4}" y1="${y0+4}" x2="${x1-4}" y2="${y1-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/><line x1="${x1-4}" y1="${y0+4}" x2="${x0+4}" y2="${y1-4}" stroke="#99aabb" stroke-width="1" pointer-events="none"/>`; }
+    else { svg+=`<line x1="${x0+6}" y1="${Math.min(y1-6,y0+8)}" x2="${x1-6}" y2="${cy}" stroke="#2a8" stroke-width="1.2" pointer-events="none"/><polygon points="${x1-6},${cy} ${x1-13},${cy-5} ${x1-13},${cy+5}" fill="#1a7" pointer-events="none"/>`; }
+    svg+=`<rect x="${x0+0.5}" y="${y0+0.5}" width="${Math.max(1,w-1)}" height="${Math.max(1,h-1)}" fill="none" stroke="#222" stroke-width="2"/>`;
+    if(selected) svg+=`<rect x="${x0+2}" y="${y0+2}" width="${Math.max(1,w-4)}" height="${Math.max(1,h-4)}" fill="none" stroke="#2a66e0" stroke-width="2" stroke-dasharray="4,3" pointer-events="none"/>`;
+    chips.push({x:x0+6, y:y0+6, idx, selected});
   });
-  for(let i=1;i<colPx.length;i++){
-    const xx=colPx[i].x0;
-    svg+=`<rect x="${xx-4}" y="1" width="8" height="${LAYOUT_CH-2}" fill="transparent" style="cursor:ew-resize" onmousedown="layoutStartDragBoundary(event,${i})"/>
-      <line x1="${xx}" y1="1" x2="${xx}" y2="${LAYOUT_CH-1}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
+  // resize strips: vertical column boundaries, horizontal row boundaries (global — move the whole line)
+  for(let i=1;i<nC;i++){
+    const x=colB[i];
+    svg+=`<rect x="${x-4}" y="1" width="8" height="${LAYOUT_CH-2}" fill="transparent" style="cursor:ew-resize" onmousedown="layoutStartDragBoundary(event,${i})"/>`;
   }
-  // merge-select handles, drawn last so they sit on top of every resize strip and are never
-  // shadowed by an overlapping hit-rect
-  handles.forEach(hd=>{
-    svg+=`<circle cx="${hd.cx}" cy="${hd.cy}" r="8" fill="${hd.sel?'#e07a1f':'#fff'}" stroke="${hd.sel?'#b85f12':'#555'}" stroke-width="1.5" style="cursor:pointer" onclick="layoutSelectBoundary(${hd.ci},${hd.ri})"/>
-      <line x1="${hd.cx-3}" y1="${hd.cy-2}" x2="${hd.cx+3}" y2="${hd.cy-2}" stroke="${hd.sel?'#fff':'#555'}" stroke-width="1.3" pointer-events="none"/>
-      <line x1="${hd.cx-3}" y1="${hd.cy+2}" x2="${hd.cx+3}" y2="${hd.cy+2}" stroke="${hd.sel?'#fff':'#555'}" stroke-width="1.3" pointer-events="none"/>`;
+  for(let i=1;i<nR;i++){
+    const y=rowB[i];
+    svg+=`<rect x="1" y="${y-4}" width="${LAYOUT_CW-2}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragRowBoundary(event,${i})"/>`;
+  }
+  chips.forEach(ch=>{
+    svg+=`<rect x="${ch.x-6}" y="${ch.y-6}" width="12" height="12" rx="2" fill="${ch.selected?'#e07a1f':'#fff'}" stroke="${ch.selected?'#b85f12':'#555'}" stroke-width="1.3" style="cursor:pointer" onclick="layoutToggleSelect(${ch.idx})"/>`;
   });
+  svg+=`<text x="${LAYOUT_CW/2}" y="${LAYOUT_CH+13}" font-size="9" text-anchor="middle" fill="#666">${nC} column${nC>1?'s':''} × ${nR} row${nR>1?'s':''} · ${g.cells.length} panel${g.cells.length>1?'s':''}</text>`;
   svg+=`</svg>`;
   wrap.innerHTML=svg;
 }
@@ -6389,46 +6453,38 @@ function renderLayoutCanvas(){
 function layoutStartDragBoundary(ev,i){
   ev.preventDefault();
   const svgEl=ev.target.closest('svg'); if(!svgEl) return;
-  _layoutDrag={kind:'boundary',idx:i,rect:svgEl.getBoundingClientRect()};
+  _layoutDrag={kind:'col',idx:i,rect:svgEl.getBoundingClientRect()};
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
-function layoutStartDragSplit(ev,colIdx,cellIdx){
+function layoutStartDragRowBoundary(ev,i){
   ev.preventDefault();
   const svgEl=ev.target.closest('svg'); if(!svgEl) return;
-  _layoutDrag={kind:'split',colIdx,cellIdx,rect:svgEl.getBoundingClientRect()};
+  _layoutDrag={kind:'row',idx:i,rect:svgEl.getBoundingClientRect()};
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
 function layoutOnDragMove(ev){
   if(!_layoutDrag) return;
-  const d=_layoutDrag;
-  if(d.kind==='boundary'){
+  const d=_layoutDrag, g=_gridDraft;
+  if(d.kind==='col'){
     const xPx=Math.min(LAYOUT_CW-8,Math.max(8,ev.clientX-d.rect.left));
     const xFracAbs=xPx/LAYOUT_CW;
-    const total=_layoutDraft.reduce((a,c)=>a+c.wFrac,0)||1;
-    let cum=0; for(let k=0;k<d.idx-1;k++) cum+=_layoutDraft[k].wFrac/total;
-    const leftStart=cum;
-    const pairSum=_layoutDraft[d.idx-1].wFrac/total + _layoutDraft[d.idx].wFrac/total;
+    let cum=0; for(let k=0;k<d.idx-1;k++) cum+=g.colFracs[k];
+    const leftStart=cum, pairSum=g.colFracs[d.idx-1]+g.colFracs[d.idx];
     let newLeftFrac=xFracAbs-leftStart;
     newLeftFrac=Math.max(0.03,Math.min(pairSum-0.03,newLeftFrac));
-    _layoutDraft[d.idx-1].wFrac=newLeftFrac*total;
-    _layoutDraft[d.idx].wFrac=(pairSum-newLeftFrac)*total;
-    renderLayoutCanvas();
-  } else if(d.kind==='split'){
-    const col=_layoutDraft[d.colIdx]; if(!col) return;
+    g.colFracs[d.idx-1]=newLeftFrac; g.colFracs[d.idx]=pairSum-newLeftFrac;
+  } else {
     const yPx=Math.min(LAYOUT_CH-8,Math.max(8,ev.clientY-d.rect.top));
     const yFracAbs=yPx/LAYOUT_CH;
-    const total=col.cells.reduce((a,c)=>a+c.hFrac,0)||1;
-    let cum=0; for(let k=0;k<d.cellIdx;k++) cum+=col.cells[k].hFrac/total;
-    const topStart=cum;
-    const pairSum=col.cells[d.cellIdx].hFrac/total + col.cells[d.cellIdx+1].hFrac/total;
+    let cum=0; for(let k=0;k<d.idx-1;k++) cum+=g.rowFracs[k];
+    const topStart=cum, pairSum=g.rowFracs[d.idx-1]+g.rowFracs[d.idx];
     let newTopFrac=yFracAbs-topStart;
     newTopFrac=Math.max(0.03,Math.min(pairSum-0.03,newTopFrac));
-    col.cells[d.cellIdx].hFrac=newTopFrac*total;
-    col.cells[d.cellIdx+1].hFrac=(pairSum-newTopFrac)*total;
-    renderLayoutCanvas();
+    g.rowFracs[d.idx-1]=newTopFrac; g.rowFracs[d.idx]=pairSum-newTopFrac;
   }
+  renderLayoutCanvas();
 }
 function layoutOnDragEnd(){
   _layoutDrag=null;
@@ -6497,8 +6553,11 @@ function saveCatalogueItem(editCode){
   // Interlock Section comment), so it isn't collected or written for new/edited catalogue entries
   // either. Existing catalogue entries still carry a harmless, now-ignored interlockDouble:false/true
   // field; nothing reads it anymore so it's inert, not worth a migration to strip out.
-  const layoutOverride={enabled:_layoutEnabled,columns:(_layoutDraft||[]).map(c=>({wFrac:c.wFrac,cells:(c.cells||[]).map(cc=>({hFrac:cc.hFrac,open:!!cc.open}))}))};
-  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride};
+  const g=_gridDraft||layoutGridDefault();
+  const layoutOverride={enabled:_layoutEnabled,grid:{colFracs:g.colFracs.slice(),rowFracs:g.rowFracs.slice(),cells:g.cells.map(c=>({r0:c.r0,c0:c.c0,r1:c.r1,c1:c.c1,open:!!c.open}))}};
+  const viewFromOutsideEl=document.getElementById('ncViewOutside');
+  const viewFromOutside=viewFromOutsideEl?!!viewFromOutsideEl.checked:false;
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride,viewFromOutside};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
@@ -7067,6 +7126,68 @@ function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):
 /* ============================ PRINT ============================ */
 /* dsGeometry(w): single geometry source of truth for the Design Summary — column widths (mm),
    row heights (mm), and which grid cells are openable, computed directly from the SAME fields the
+// Shared glyph/fill helpers used by every elevation render branch (columns/rows/default-grid/
+// grid-merge). Centralizing this avoids the four render branches drifting out of sync visually.
+const HANDLE_PATHS = {
+  inside: ["M43 112 C75 112 93 130 94 160 L94 174 C94 190 85 201 70 205 L42 212",
+           "M42 212 C31 216 24 227 25 241 L36 485 C38 521 54 542 82 542 C111 542 126 520 124 484 L111 226 C109 190 97 164 75 145 C65 136 54 130 43 128"],
+  outside:["M-43 112 C-75 112 -93 130 -94 160 L-94 174 C-94 190 -85 201 -70 205 L-42 212",
+           "M-42 212 C-31 216 -24 227 -25 241 L-36 485 C-38 521 -54 542 -82 542 C-111 542 -126 520 -124 484 L-111 226 C-109 190 -97 164 -75 145 C-65 136 -54 130 -43 128"]
+};
+const HANDLE_BBOX = {inside:{minX:24,minY:112,w:102,h:430}, outside:{minX:-126,minY:112,w:102,h:430}};
+// Simplified from the user's "aluminium window handle" reference (inside/outside lever views) —
+// just the lever+hub outline, no backplate/screws/labels, so it stays legible at small icon size.
+function handleGlyphSVG(px,py,targetH,outside){
+  const side=outside?'outside':'inside';
+  const bb=HANDLE_BBOX[side];
+  const s=targetH/bb.h;
+  const tx=px-bb.minX*s, ty=py-bb.minY*s;
+  const d=HANDLE_PATHS[side];
+  return `<g transform="translate(${tx.toFixed(2)},${ty.toFixed(2)}) scale(${s.toFixed(4)})" fill="none" stroke="#222" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none">
+    <path d="${d[0]}"/><path d="${d[1]}"/>
+  </g>`;
+}
+function cellFillColor(open){ return open?'#5ce1e6':'#eaf4ff'; }
+// wtype: the window type string (e.g. 'casement','awning+fixed','sliding','sliding+fixed','fixed').
+// ci: this cell's column index within its row/column group — alternates which side the casement
+// hinge is drawn on, same convention the pre-existing code used.
+// outsideView: cat.viewFromOutside — swaps in the mirrored handle glyph and is also used by the
+// caller to switch the "Viewed from Inside/Outside" caption.
+function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
+  const cx=ix+icw/2, cy=iy+ich/2;
+  const isSliding=(wtype==='sliding'||wtype==='sliding+fixed');
+  const isFixedCell=(!open||wtype==='fixed');
+  if(isFixedCell){
+    if(isSliding){
+      const size=Math.min(icw,ich)*0.5;
+      return `<g transform="translate(${(cx-size/2).toFixed(2)},${(cy-size/2).toFixed(2)}) scale(${(size/69.75).toFixed(4)})" pointer-events="none"><path d="M 69.164062 13.066406 L 56.09375 0 L 34.582031 21.507812 L 13.066406 0 L 0 13.066406 L 21.511719 34.582031 L 0 56.09375 L 13.066406 69.164062 L 34.582031 47.648438 L 56.09375 69.164062 L 69.164062 56.09375 L 47.648438 34.582031 Z M 69.164062 13.066406 " fill="#99aabb" fill-opacity="0.85"/></g>`;
+    }
+    return `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6" pointer-events="none"/><line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6" pointer-events="none"/>`;
+  }
+  let g='';
+  if(isSliding){
+    const aw=Math.min(icw,ich)*0.34, ah=aw*(69.749998/60.75);
+    g+=`<g transform="translate(${(cx-aw/2).toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${(aw/60.75).toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
+    g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.4, !!outsideView);
+  } else if(wtype.indexOf('awning')===0){
+    const az=Math.min(icw,ich)*0.18;
+    g+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
+      <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
+      <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1" pointer-events="none"/>
+      <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222" pointer-events="none"/>`;
+    g+=handleGlyphSVG(ix+icw*0.08, iy+ich*0.1, Math.min(icw,ich)*0.35, !!outsideView);
+  } else {
+    const hingeLeft=(ci%2===0);
+    const az=Math.min(icw,ich)*0.18;
+    g+= hingeLeft
+      ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
+         <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222" pointer-events="none"/>`
+      : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
+         <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222" pointer-events="none"/>`;
+    g+=handleGlyphSVG(hingeLeft? ix+icw*0.72 : ix+icw*0.08, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
+  }
+  return g;
+}
    pricing engine (calcWindow) already uses for this window: w.nShutters for sliding/casement panel
    count, w.fCols/w.fRows (Mullions/Transoms) for 'fixed' windows, the catalogue's own Divider Qty +
    Direction for other combo types, and w.sectionHeights for an explicit unequal-row override. Both
@@ -7080,6 +7201,11 @@ function dsGeometry(w){
   const wMm=toMm(OW), hMm=toMm(OH), shMm=toMm(SH), swMm=toMm(SW);
   const wtype=w.wtype||'casement';
   const isSlidingLike=(wtype==='sliding'||wtype==='sliding+fixed');
+  // Hoisted to the top (used to be only looked up inside the generic divider-detection branch
+  // below) so viewFromOutside and the manual grid override are available no matter which wtype
+  // branch below ends up computing colsMm/rowsMm.
+  const cat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
+  const outsideView=!!(cat&&cat.viewFromOutside);
 
   // ---- rows (mm) ----
   const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
@@ -7097,7 +7223,7 @@ function dsGeometry(w){
   }
 
   // ---- columns (mm) + optional per-column cell split ----
-  let colsMm, colsTotalMm=wMm, nShOpen, columns=null, rows=null;
+  let colsMm, colsTotalMm=wMm, nShOpen, columns=null, rows=null, grid=null;
   if(isSlidingLike){
     const nSh=Math.max(1,num(w.nShutters)||2);
     const base=Math.floor(wMm/nSh), rem=wMm-base*nSh;
@@ -7109,18 +7235,43 @@ function dsGeometry(w){
     colsMm=Array.from({length:nC},(_,i)=>base+(i<rem?1:0));
     nShOpen=0;
   } else {
-    const cat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
     const ov=cat&&cat.layoutOverride;
     // Manual override (Catalogue → Edit Window Type → Elevation Layout Override) always wins when
-    // enabled: the user has drawn the exact column/split layout themselves, so no divider-formula
-    // guessing is needed or applied for this code. wFrac/splitTopFrac are fractions (0..1), scale-
-    // invariant across any real instance's OW/OH — re-normalized here in case stored fractions don't
-    // sum to exactly 1 (manual edits, rounding).
-    if(ov && ov.enabled && Array.isArray(ov.columns) && ov.columns.length){
-      // legacyColCells: columns saved by an earlier build of the editor (before "Add Row" let a
-      // column hold any number of cells) stored a single type+splitTopFrac instead of a cells[]
-      // array — convert those to the same {hFrac,open} shape on read so old saved overrides keep
-      // rendering exactly as they did, with no migration needed.
+    // enabled: the user has drawn the exact panel layout themselves, so no divider-formula guessing
+    // is needed or applied for this code.
+    if(ov && ov.enabled && ov.grid && Array.isArray(ov.grid.cells) && ov.grid.cells.length){
+      // New grid-with-merged-cells format: a true rows×cols grid where any rectangular set of cells
+      // can be merged into one panel (so, unlike the old column-primary "columns" format below, a
+      // merge can span across columns too — e.g. two fixed panels side by side become one full-width
+      // fixed panel with no stray vertical line through it).
+      let colFracs=ov.grid.colFracs.map(f=>Math.max(0.0001,num(f)||0));
+      const colSum=colFracs.reduce((a,b)=>a+b,0)||1; colFracs=colFracs.map(f=>f/colSum);
+      let rowFracs=ov.grid.rowFracs.map(f=>Math.max(0.0001,num(f)||0));
+      const rowSum=rowFracs.reduce((a,b)=>a+b,0)||1; rowFracs=rowFracs.map(f=>f/rowSum);
+      const colB=[0]; { let acc=0; colFracs.forEach(f=>{ acc+=f; colB.push(acc); }); }
+      const rowB=[0]; { let acc=0; rowFracs.forEach(f=>{ acc+=f; rowB.push(acc); }); }
+      const mmAt=(fracArr,i,total)=>Math.max(0,Math.round(fracArr[i]*total));
+      grid={
+        colFracs, rowFracs,
+        cells: ov.grid.cells.map(c=>({
+          r0:c.r0,c0:c.c0,r1:c.r1,c1:c.c1,open:!!c.open,
+          xMm:mmAt(colB,c.c0,wMm), x2Mm:mmAt(colB,c.c1,wMm),
+          yMm:mmAt(rowB,c.r0,hMm), y2Mm:mmAt(rowB,c.r1,hMm)
+        }))
+      };
+      colsMm=colFracs.map(f=>Math.max(1,Math.round(f*wMm)));
+      { const sumW=colsMm.reduce((a,b)=>a+b,0); if(colsMm.length) colsMm[colsMm.length-1]=Math.max(1,colsMm[colsMm.length-1]+(wMm-sumW)); }
+      nShOpen=grid.cells.filter(c=>c.open).length;
+      if(rawSec.length<2){
+        rowsMm=rowFracs.map(f=>Math.max(1,Math.round(f*hMm)));
+        const sumH=rowsMm.reduce((a,b)=>a+b,0); if(rowsMm.length) rowsMm[rowsMm.length-1]=Math.max(1,rowsMm[rowsMm.length-1]+(hMm-sumH));
+        rowsTotalMm=hMm;
+      }
+    } else if(ov && ov.enabled && Array.isArray(ov.columns) && ov.columns.length){
+      // Legacy column-primary format (every column spans full height, independent per-column row
+      // split) — kept rendering exactly as before for any code whose override predates the grid
+      // editor, so nothing already saved regresses. legacyColCells: columns saved by an even earlier
+      // build (before "Add Row") stored a single type+splitTopFrac instead of a cells[] array.
       const legacyColCells=c=>{
         const topFrac=Math.min(0.99,Math.max(0.01,num(c.splitTopFrac)||0.5));
         if(c.type==='shutter') return [{hFrac:1,open:true}];
@@ -7147,8 +7298,6 @@ function dsGeometry(w){
       colsMm=columns.map(c=>c.wMm);
       nShOpen=columns.reduce((a,c)=>a+c.cells.filter(x=>x.open).length,0);
       if(rawSec.length<2){
-        // height ruler reflects whichever column has the most rows (the most informative split);
-        // ties broken by first occurrence. A single-cell layout falls back to one full-height row.
         let best=null;
         columns.forEach(c=>{ if(c.cells.length>1 && (!best||c.cells.length>best.cells.length)) best=c; });
         if(best){ rowsMm=best.cells.map(cc=>cc.hMm); rowsTotalMm=hMm; }
@@ -7250,20 +7399,32 @@ function dsGeometry(w){
     for(let r=0;r<nRows;r++){ const row=[]; for(let c=0;c<nCols;c++){ row.push(seen<openCount); seen++; } openableGrid.push(row); }
   }
 
-  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows};
+  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows,grid,outsideView};
 }
-/* elevationSVG(geo,iW,iH): draws the actual window elevation (frame, each shutter/fixed cell, and the
-   mullion/transom lines between them) scaled into an iW×iH box from dsGeometry's own column/row mm
-   arrays — the same arrays the dimension rulers in doPrint's 'ds' mode render from, so the picture and
-   the arrows are mathematically the same geometry, never two disconnected pieces of art. Replaces the
-   catalogue's static per-code photo (catImgStatic) as the Design Summary's technical drawing only —
-   that photo is untouched everywhere else (catalogue grid, Quotation PDF thumbnail, openImg modal).
-   When geo.columns is set (a local-transom combo layout), each column carries its OWN cell list
-   (plain fixed columns stay a single full-height cell; split columns get [shutter-top, fixed-bottom])
-   instead of one shared rows×cols grid — so a transom line is only drawn across the column it belongs
-   to, never the full window width. */
 function elevationSVG(geo,iW,iH){
-  const {wtype,isSlidingLike}=geo;
+  const {wtype,isSlidingLike,outsideView}=geo;
+  if(geo.grid){
+    // True rows×cols grid where any rectangular set of cells can be merged into one panel (see
+    // dsGeometry's ov.grid branch). Each cell carries its own absolute mm boundaries, computed from
+    // the SAME colFracs/rowFracs fractions for every cell, so two cells that share an edge always
+    // round to the identical pixel boundary — no 1px gaps or overlaps between merged and unmerged
+    // neighbors.
+    const wMm=geo.wMm||1, hMm=geo.hMm||1;
+    let cells='';
+    geo.grid.cells.forEach((cell,ci)=>{
+      const x0=Math.round(iW*cell.xMm/wMm), x1=Math.round(iW*cell.x2Mm/wMm);
+      const y0=Math.round(iH*cell.yMm/hMm), y1=Math.round(iH*cell.y2Mm/hMm);
+      const inset=1.5;
+      const ix=x0+inset, iy=y0+inset, icw=Math.max(1,(x1-x0)-2*inset), ich=Math.max(1,(y1-y0)-2*inset);
+      cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(cell.open)}" stroke="none"/>`;
+      cells+=cellGlyphMarkup(ix,iy,icw,ich,cell.open,wtype,cell.c0,outsideView);
+      cells+=`<rect x="${x0+0.5}" y="${y0+0.5}" width="${Math.max(1,(x1-x0)-1)}" height="${Math.max(1,(y1-y0)-1)}" fill="none" stroke="#222" stroke-width="2"/>`;
+    });
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
+      <rect x="1" y="1" width="${iW-2}" height="${iH-2}" fill="none" stroke="#222" stroke-width="2.5"/>
+      ${cells}
+    </svg>`;
+  }
   if(geo.columns){
     const colTot=geo.colsTotalMm||geo.wMm||1;
     const colPx=[]; { let acc=0; geo.columns.forEach(col=>{ const cw=Math.max(1,Math.round(iW*col.wMm/colTot)); colPx.push({x0:acc,w:cw,col}); acc+=cw; });
@@ -7278,20 +7439,8 @@ function elevationSVG(geo,iW,iH){
         const {y0,h:ch,open}=rp;
         const inset=1.5;
         const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
-        const cx=ix+icw/2, cy=iy+ich/2;
-        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
-        if(!open){
-          cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
-            <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
-        } else {
-          const hingeLeft=(ci%2===0);
-          const az=Math.min(icw,ich)*0.18;
-          cells+= hingeLeft
-            ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-               <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
-            : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-               <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
-        }
+        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
+        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView);
         if(ri<rowPx.length-1){ const y=y0+ch; dividers+=`<line x1="${x0}" y1="${y}" x2="${x0+cw}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
       });
       if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="0" x2="${x}" y2="${iH}" stroke="#222" stroke-width="2"/>`; }
@@ -7320,26 +7469,8 @@ function elevationSVG(geo,iW,iH){
         const {x0,w:cw,open}=cp;
         const inset=1.5;
         const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,rh-2*inset);
-        const cx=ix+icw/2, cy=iy+ich/2;
-        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
-        if(!open){
-          cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
-            <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
-        } else if(wtype.indexOf('awning')===0){
-          const az=Math.min(icw,ich)*0.18;
-          cells+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
-            <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
-            <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1"/>
-            <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222"/>`;
-        } else {
-          const hingeLeft=(ci%2===0);
-          const az=Math.min(icw,ich)*0.18;
-          cells+= hingeLeft
-            ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-               <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
-            : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-               <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
-        }
+        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
+        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView);
         if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y0+rh}" stroke="#222" stroke-width="2"/>`; }
       });
       if(ri<rowPx.length-1){ const y=y0+rh; dividers+=`<line x1="0" y1="${y}" x2="${iW}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
@@ -7362,30 +7493,8 @@ function elevationSVG(geo,iW,iH){
       const open=(openableGrid[r]&&openableGrid[r][c])||false;
       const inset=1.5;
       const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
-      const cx=ix+icw/2, cy=iy+ich/2;
-      cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
-      if(!open||wtype==='fixed'){
-        cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
-          <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
-      } else if(isSlidingLike){
-        const ax=icw*0.16;
-        cells+=`<line x1="${cx-ax}" y1="${cy}" x2="${cx+ax}" y2="${cy}" stroke="#333" stroke-width="1"/>
-          <polygon points="${cx+ax},${cy} ${cx+ax-4},${cy-3} ${cx+ax-4},${cy+3}" fill="#333"/>`;
-      } else if(wtype.indexOf('awning')===0){
-        const az=Math.min(icw,ich)*0.18;
-        cells+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
-          <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
-          <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1"/>
-          <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222"/>`;
-      } else {
-        const hingeLeft=(c%2===0);
-        const az=Math.min(icw,ich)*0.18;
-        cells+= hingeLeft
-          ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-             <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
-          : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
-             <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
-      }
+      cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
+      cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,c,outsideView);
     }
   }
   let dividers='';
@@ -7756,7 +7865,7 @@ function doPrint(id,mode){
                 ${heightSvg}
                 <div style="line-height:0">${picHtml}</div>
               </div>
-              <div style="margin-left:${DH}px;margin-top:3px;font-size:8px;color:#cc0000;font-style:italic;font-weight:600;font-family:Arial">Viewed from Inside</div>
+              <div style="margin-left:${DH}px;margin-top:3px;font-size:8px;color:#cc0000;font-style:italic;font-weight:600;font-family:Arial">Viewed from ${geo.outsideView?'Outside':'Inside'}</div>
             </div>
             <!-- Details -->
             <div style="font-size:10px;color:#000;line-height:1.7;flex:1;padding-top:2px;font-family:Arial">
