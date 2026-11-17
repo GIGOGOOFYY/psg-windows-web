@@ -7126,6 +7126,8 @@ function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):
 /* ============================ PRINT ============================ */
 /* dsGeometry(w): single geometry source of truth for the Design Summary — column widths (mm),
    row heights (mm), and which grid cells are openable, computed directly from the SAME fields the
+   pricing engine. (See the continuation of this comment, re-opened below, just before dsGeometry
+   itself — split only to make room for the shared glyph/color helpers, not a real break.) */
 // Shared glyph/fill helpers used by every elevation render branch (columns/rows/default-grid/
 // grid-merge). Centralizing this avoids the four render branches drifting out of sync visually.
 const HANDLE_PATHS = {
@@ -7188,6 +7190,8 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
   }
   return g;
 }
+/* dsGeometry(w): single geometry source of truth for the Design Summary — column widths (mm), row
+   heights (mm), and which grid cells are openable, computed directly from the SAME fields the
    pricing engine (calcWindow) already uses for this window: w.nShutters for sliding/casement panel
    count, w.fCols/w.fRows (Mullions/Transoms) for 'fixed' windows, the catalogue's own Divider Qty +
    Direction for other combo types, and w.sectionHeights for an explicit unequal-row override. Both
