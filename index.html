@@ -6213,13 +6213,27 @@ function updateCatDivRow(i,key,val){ if(!_catDivDraft[i]) return; _catDivDraft[i
    drawing. Selection model: clicking a cell (which also toggles it Fixed/Shutter) marks its column as
    the "+ Add Row" target; clicking — not dragging — a row-boundary line selects that exact pair for
    "− Remove Row" (merge); a real drag on that same line still resizes as before. */
+/* ---- Catalogue "Edit Window Type" Elevation Layout Override: a per-column visual editor the user
+   drives directly (click a cell to toggle Fixed/Shutter, drag lines to resize, Add Row / merge rows
+   with Remove Row) instead of divider-formula guessing. Mirrors the _catDivDraft pattern used by
+   Divider Components above: _layoutDraft is the working copy, edited in place, read back by
+   saveCatalogueItem on save. Each column is {wFrac, cells:[{hFrac,open}]} — any number of cells per
+   column, independent of every other column. dsGeometry consumes the saved layoutOverride (see its
+   "ov.enabled" branch) ahead of every other heuristic whenever enabled, so pricing (still reading
+   dividerQty/dividerDir/dividers[] untouched) is unaffected — this only changes the Design Summary
+   drawing. Selection model: clicking a cell (which also toggles it Fixed/Shutter) marks its column as
+   the "+ Add Row" target. Merge-select has its own small circle handle on every row boundary — a
+   plain onclick, separate from the full-width drag strip used to resize — so picking a boundary for
+   "− Remove Row" never races against a real mouse's few px of click jitter on a thin 8px strip (the
+   earlier design tried to tell a click from a drag on that same strip, which is exactly why it was
+   unreliable: a real click almost always moves a couple of px, which either got read as a no-op drag
+   or missed onto the cell above/below). */
 let _layoutDraft=[]; // [{wFrac,cells:[{hFrac,open}]}]
 let _layoutEnabled=false;
 let _layoutDrag=null;
 let _selectedCol=null;       // column index "+ Add Row" targets; null = last column
 let _selectedBoundary=null;  // {colIdx,cellIdx} the boundary "− Remove Row" (merge) targets; null = last boundary of _selectedCol
 const LAYOUT_CW=320, LAYOUT_CH=200, LAYOUT_LABEL_H=30;
-const LAYOUT_CLICK_SLOP=4; // px of mouse movement below which a mousedown+mouseup on a line counts as a select-click, not a drag
 
 function layoutDefaultCols(){ return [{wFrac:1,cells:[{hFrac:1,open:false}]}]; }
 
@@ -6242,7 +6256,7 @@ function layoutEditorHTML(){
         <button type="button" class="ghost sm" onclick="layoutAddRow()">+ Add Row</button>
         <button type="button" class="ghost sm" onclick="layoutRemoveRow()">− Remove Row</button>
       </div>
-      <div class="muted" style="font-size:10px;text-align:center">Click a panel to toggle Fixed/Shutter and pick its column (outlined blue) for + Add Row. Click — don't drag — a row line to pick it (shown orange) for − Remove Row, which merges just that pair. Drag any line to resize.</div>
+      <div class="muted" style="font-size:10px;text-align:center">Click a panel to toggle Fixed/Shutter and pick its column (outlined blue) for + Add Row. Click the small circle on a row line to pick that row split (it turns orange) for − Remove Row, which merges just those two rows. Drag a line (away from the circle) to resize.</div>
     </div>
   </div>`;
 }
@@ -6285,6 +6299,11 @@ function layoutCellClick(colIdx,cellIdx){
   _selectedCol=colIdx;
   renderLayoutCanvas();
 }
+function layoutSelectBoundary(colIdx,cellIdx){
+  const same=_selectedBoundary && _selectedBoundary.colIdx===colIdx && _selectedBoundary.cellIdx===cellIdx;
+  _selectedBoundary=same?null:{colIdx,cellIdx};
+  renderLayoutCanvas();
+}
 function layoutAddRow(){
   const colIdx=(_selectedCol!=null)?_selectedCol:_layoutDraft.length-1;
   const col=_layoutDraft[colIdx]; if(!col) return;
@@ -6297,8 +6316,8 @@ function layoutAddRow(){
   renderLayoutCanvas();
 }
 function layoutRemoveRow(){
-  // Merge a specific adjacent pair if a boundary was picked by clicking (not dragging) a row line;
-  // otherwise fall back to merging the last two rows of the Add-Row target column.
+  // Merge the specific adjacent pair picked via its boundary's circle handle; otherwise fall back
+  // to merging the last two rows of the Add-Row target column.
   let colIdx, cellIdx;
   if(_selectedBoundary){ colIdx=_selectedBoundary.colIdx; cellIdx=_selectedBoundary.cellIdx; }
   else { colIdx=(_selectedCol!=null)?_selectedCol:_layoutDraft.length-1; cellIdx=null; }
@@ -6323,6 +6342,7 @@ function renderLayoutCanvas(){
   const colPx=cols.map((c,ci)=>{ const w=(c.wFrac/colTotal)*LAYOUT_CW; const px={x0:x,w,c,ci}; x+=w; return px; });
   let svg=`<svg width="${LAYOUT_CW}" height="${LAYOUT_CH+LAYOUT_LABEL_H}" viewBox="0 0 ${LAYOUT_CW} ${LAYOUT_CH+LAYOUT_LABEL_H}" style="overflow:visible">
     <rect x="1" y="1" width="${LAYOUT_CW-2}" height="${LAYOUT_CH-2}" fill="none" stroke="#222" stroke-width="2.5"/>`;
+  const handles=[]; // drawn last, on top of everything, so their small click target always wins
   colPx.forEach(cp=>{
     const {x0,w,c,ci}=cp;
     const isSelCol=(ci===((_selectedCol!=null)?_selectedCol:cols.length-1));
@@ -6340,7 +6360,8 @@ function renderLayoutCanvas(){
         const sy=y0+h;
         const isSelBnd=_selectedBoundary && _selectedBoundary.colIdx===ci && _selectedBoundary.cellIdx===ri;
         svg+=`<rect x="${x0+1}" y="${sy-4}" width="${Math.max(1,w-2)}" height="8" fill="transparent" style="cursor:ns-resize" onmousedown="layoutStartDragSplit(event,${ci},${ri})"/>
-          <line x1="${x0+1}" y1="${sy}" x2="${x0+w-1}" y2="${sy}" stroke="${isSelBnd?'#e07a1f':'#222'}" stroke-width="${isSelBnd?'4':'2'}" pointer-events="none"/>`;
+          <line x1="${x0+1}" y1="${sy}" x2="${x0+w-1}" y2="${sy}" stroke="${isSelBnd?'#e07a1f':'#222'}" stroke-width="${isSelBnd?'3':'2'}" pointer-events="none"/>`;
+        handles.push({cx:x0+w/2, cy:sy, ci, ri, sel:isSelBnd});
       }
     });
     if(isSelCol){
@@ -6354,6 +6375,13 @@ function renderLayoutCanvas(){
     svg+=`<rect x="${xx-4}" y="1" width="8" height="${LAYOUT_CH-2}" fill="transparent" style="cursor:ew-resize" onmousedown="layoutStartDragBoundary(event,${i})"/>
       <line x1="${xx}" y1="1" x2="${xx}" y2="${LAYOUT_CH-1}" stroke="#222" stroke-width="2" pointer-events="none"/>`;
   }
+  // merge-select handles, drawn last so they sit on top of every resize strip and are never
+  // shadowed by an overlapping hit-rect
+  handles.forEach(hd=>{
+    svg+=`<circle cx="${hd.cx}" cy="${hd.cy}" r="8" fill="${hd.sel?'#e07a1f':'#fff'}" stroke="${hd.sel?'#b85f12':'#555'}" stroke-width="1.5" style="cursor:pointer" onclick="layoutSelectBoundary(${hd.ci},${hd.ri})"/>
+      <line x1="${hd.cx-3}" y1="${hd.cy-2}" x2="${hd.cx+3}" y2="${hd.cy-2}" stroke="${hd.sel?'#fff':'#555'}" stroke-width="1.3" pointer-events="none"/>
+      <line x1="${hd.cx-3}" y1="${hd.cy+2}" x2="${hd.cx+3}" y2="${hd.cy+2}" stroke="${hd.sel?'#fff':'#555'}" stroke-width="1.3" pointer-events="none"/>`;
+  });
   svg+=`</svg>`;
   wrap.innerHTML=svg;
 }
@@ -6361,21 +6389,20 @@ function renderLayoutCanvas(){
 function layoutStartDragBoundary(ev,i){
   ev.preventDefault();
   const svgEl=ev.target.closest('svg'); if(!svgEl) return;
-  _layoutDrag={kind:'boundary',idx:i,rect:svgEl.getBoundingClientRect(),startX:ev.clientX,startY:ev.clientY,moved:false};
+  _layoutDrag={kind:'boundary',idx:i,rect:svgEl.getBoundingClientRect()};
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
 function layoutStartDragSplit(ev,colIdx,cellIdx){
   ev.preventDefault();
   const svgEl=ev.target.closest('svg'); if(!svgEl) return;
-  _layoutDrag={kind:'split',colIdx,cellIdx,rect:svgEl.getBoundingClientRect(),startX:ev.clientX,startY:ev.clientY,moved:false};
+  _layoutDrag={kind:'split',colIdx,cellIdx,rect:svgEl.getBoundingClientRect()};
   document.addEventListener('mousemove',layoutOnDragMove);
   document.addEventListener('mouseup',layoutOnDragEnd);
 }
 function layoutOnDragMove(ev){
   if(!_layoutDrag) return;
   const d=_layoutDrag;
-  if(Math.abs(ev.clientX-d.startX)>LAYOUT_CLICK_SLOP || Math.abs(ev.clientY-d.startY)>LAYOUT_CLICK_SLOP) d.moved=true;
   if(d.kind==='boundary'){
     const xPx=Math.min(LAYOUT_CW-8,Math.max(8,ev.clientX-d.rect.left));
     const xFracAbs=xPx/LAYOUT_CW;
@@ -6404,13 +6431,6 @@ function layoutOnDragMove(ev){
   }
 }
 function layoutOnDragEnd(){
-  const d=_layoutDrag;
-  if(d && d.kind==='split' && !d.moved){
-    // a plain click on the row line, no drag: (de)select this boundary for merge
-    const same=_selectedBoundary && _selectedBoundary.colIdx===d.colIdx && _selectedBoundary.cellIdx===d.cellIdx;
-    _selectedBoundary=same?null:{colIdx:d.colIdx,cellIdx:d.cellIdx};
-    renderLayoutCanvas();
-  }
   _layoutDrag=null;
   document.removeEventListener('mousemove',layoutOnDragMove);
   document.removeEventListener('mouseup',layoutOnDragEnd);
