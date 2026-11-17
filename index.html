@@ -7097,7 +7097,7 @@ function dsGeometry(w){
   }
 
   // ---- columns (mm) + optional per-column cell split ----
-  let colsMm, colsTotalMm=wMm, nShOpen, columns=null;
+  let colsMm, colsTotalMm=wMm, nShOpen, columns=null, rows=null;
   if(isSlidingLike){
     const nSh=Math.max(1,num(w.nShutters)||2);
     const base=Math.floor(wMm/nSh), rem=wMm-base*nSh;
@@ -7166,6 +7166,15 @@ function dsGeometry(w){
     const normF=f=>String(f||'').replace(/\s+/g,'').toUpperCase();
     const vFullQty=divRows.filter(r=>r.dir==='vertical'&&normF(r.formula)==='OH').reduce((a,r)=>a+(num(r.qty)||0),0);
     const hLocalQty=divRows.filter(r=>r.dir==='horizontal'&&normF(r.formula)==='SW').reduce((a,r)=>a+(num(r.qty)||0),0);
+    // Mirror image of the pattern above: a full-width HORIZONTAL divider (formula "OW") sets the real
+    // ROW count, while a VERTICAL divider whose formula is "SH" (shutter height, not the full "OH")
+    // only cuts across one row, splitting it into a fixed strip + an operable shutter — e.g. an
+    // awning+fixed code where one full-width transom separates a plain fixed band (full OW) from a
+    // band of height SH that is itself split into [shutter(SW), fixed(OW-SW)]. Confirmed against
+    // PSG-J5P-14862 (D1 horizontal qty1 formula OW, D2 vertical qty1 formula SH => 2 rows: top row
+    // split into shutter+fixed, bottom row one plain fixed panel spanning the full width).
+    const hFullQty=divRows.filter(r=>r.dir==='horizontal'&&normF(r.formula)==='OW').reduce((a,r)=>a+(num(r.qty)||0),0);
+    const vLocalQty=divRows.filter(r=>r.dir==='vertical'&&normF(r.formula)==='SH').reduce((a,r)=>a+(num(r.qty)||0),0);
     if(vFullQty>0 && hLocalQty>0){
       const nCols=vFullQty+1;
       const splitCount=Math.max(0,Math.min(hLocalQty,nCols));
@@ -7184,6 +7193,29 @@ function dsGeometry(w){
       colsMm=columns.map(c=>c.wMm);
       nShOpen=splitCount;
       if(rawSec.length<2){ rowsMm=[shMm,Math.max(1,hMm-shMm)]; rowsTotalMm=hMm; }
+    } else if(hFullQty>0 && vLocalQty>0){
+      const nRowsHere=hFullQty+1;
+      const splitCount=Math.max(0,Math.min(vLocalQty,nRowsHere));
+      const plainCount=nRowsHere-splitCount;
+      const splitTop=Math.ceil(splitCount/2), splitBottom=splitCount-splitTop;
+      const order=[];
+      for(let i=0;i<splitTop;i++) order.push(true);
+      for(let i=0;i<plainCount;i++) order.push(false);
+      for(let i=0;i<splitBottom;i++) order.push(true);
+      const plainHMm=plainCount>0?Math.max(1,Math.round((hMm-splitCount*shMm)/plainCount)):0;
+      rows=order.map(isSplit=>isSplit
+        ? {hMm:shMm, cells:[{wMm:swMm,open:true},{wMm:Math.max(1,wMm-swMm),open:false}]}
+        : {hMm:plainHMm, cells:[{wMm,open:false}]});
+      const sumH=rows.reduce((a,r)=>a+r.hMm,0);
+      if(rows.length) rows[rows.length-1].hMm=Math.max(1,rows[rows.length-1].hMm+(hMm-sumH));
+      rowsMm=rows.map(r=>r.hMm);
+      rowsTotalMm=hMm;
+      nShOpen=splitCount;
+      // width ruler reflects whichever row has the most sub-columns (the most informative split);
+      // a plain full-width row contributes nothing extra, so it never wins over a split row.
+      let bestRow=null;
+      rows.forEach(r=>{ if(r.cells.length>1 && (!bestRow||r.cells.length>bestRow.cells.length)) bestRow=r; });
+      colsMm=bestRow?bestRow.cells.map(cc=>cc.wMm):[wMm];
     } else {
       // existing aggregate dividerQty/dividerDir grid fallback (unchanged)
       const dQty=Math.max(0,num(cat&&cat.dividerQty)||0);
@@ -7218,7 +7250,7 @@ function dsGeometry(w){
     for(let r=0;r<nRows;r++){ const row=[]; for(let c=0;c<nCols;c++){ row.push(seen<openCount); seen++; } openableGrid.push(row); }
   }
 
-  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns};
+  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows};
 }
 /* elevationSVG(geo,iW,iH): draws the actual window elevation (frame, each shutter/fixed cell, and the
    mullion/transom lines between them) scaled into an iW×iH box from dsGeometry's own column/row mm
@@ -7263,6 +7295,54 @@ function elevationSVG(geo,iW,iH){
         if(ri<rowPx.length-1){ const y=y0+ch; dividers+=`<line x1="${x0}" y1="${y}" x2="${x0+cw}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
       });
       if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="0" x2="${x}" y2="${iH}" stroke="#222" stroke-width="2"/>`; }
+    });
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
+      <rect x="1" y="1" width="${iW-2}" height="${iH-2}" fill="none" stroke="#222" stroke-width="2.5"/>
+      ${cells}${dividers}
+    </svg>`;
+  }
+  if(geo.rows){
+    // Mirror of the geo.columns branch above, transposed: each ROW carries its own cell list (a
+    // plain row stays one full-width fixed cell; a split row gets [shutter, fixed] side by side),
+    // so a mullion line is only drawn across the row it belongs to, never the full window height —
+    // this is what lets a full-width fixed band sit directly below a split shutter+fixed band with
+    // no stray vertical line running through the fixed band underneath it.
+    const rowTot=geo.rowsTotalMm||geo.hMm||1;
+    const rowPx=[]; { let acc=0; geo.rows.forEach(row=>{ const rh=Math.max(1,Math.round(iH*row.hMm/rowTot)); rowPx.push({y0:acc,h:rh,row}); acc+=rh; });
+      if(rowPx.length){ const last=rowPx[rowPx.length-1]; last.h=Math.max(1,last.h+(iH-acc)); } }
+    let cells='', dividers='';
+    rowPx.forEach((rp,ri)=>{
+      const {y0,h:rh,row}=rp;
+      const colTot=row.cells.reduce((a,c)=>a+c.wMm,0)||1;
+      const colPx=[]; { let acc=0; row.cells.forEach(cell=>{ const cw=Math.max(1,Math.round(iW*cell.wMm/colTot)); colPx.push({x0:acc,w:cw,open:cell.open}); acc+=cw; });
+        if(colPx.length){ const last=colPx[colPx.length-1]; last.w=Math.max(1,last.w+(iW-acc)); } }
+      colPx.forEach((cp,ci)=>{
+        const {x0,w:cw,open}=cp;
+        const inset=1.5;
+        const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,rh-2*inset);
+        const cx=ix+icw/2, cy=iy+ich/2;
+        cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="#eaf4ff" stroke="none"/>`;
+        if(!open){
+          cells+=`<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>
+            <line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6"/>`;
+        } else if(wtype.indexOf('awning')===0){
+          const az=Math.min(icw,ich)*0.18;
+          cells+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
+            <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6"/>
+            <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1"/>
+            <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222"/>`;
+        } else {
+          const hingeLeft=(ci%2===0);
+          const az=Math.min(icw,ich)*0.18;
+          cells+= hingeLeft
+            ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+               <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222"/>`
+            : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6"/>
+               <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222"/>`;
+        }
+        if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y0+rh}" stroke="#222" stroke-width="2"/>`; }
+      });
+      if(ri<rowPx.length-1){ const y=y0+rh; dividers+=`<line x1="0" y1="${y}" x2="${iW}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
     });
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
       <rect x="1" y="1" width="${iW-2}" height="${iH-2}" fill="none" stroke="#222" stroke-width="2.5"/>
