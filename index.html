@@ -7291,23 +7291,21 @@ function handleOpeningFileUpload(input){
 }
 // Shared glyph/fill helpers used by every elevation render branch (columns/rows/default-grid/
 // grid-merge). Centralizing this avoids the four render branches drifting out of sync visually.
-const HANDLE_PATHS = {
-  inside: ["M43 112 C75 112 93 130 94 160 L94 174 C94 190 85 201 70 205 L42 212",
-           "M42 212 C31 216 24 227 25 241 L36 485 C38 521 54 542 82 542 C111 542 126 520 124 484 L111 226 C109 190 97 164 75 145 C65 136 54 130 43 128"],
-  outside:["M-43 112 C-75 112 -93 130 -94 160 L-94 174 C-94 190 -85 201 -70 205 L-42 212",
-           "M-42 212 C-31 216 -24 227 -25 241 L-36 485 C-38 521 -54 542 -82 542 C-111 542 -126 520 -124 484 L-111 226 C-109 190 -97 164 -75 145 C-65 136 -54 130 -43 128"]
-};
-const HANDLE_BBOX = {inside:{minX:24,minY:112,w:102,h:430}, outside:{minX:-126,minY:112,w:102,h:430}};
-// Simplified from the user's "aluminium window handle" reference (inside/outside lever views) —
-// just the lever+hub outline, no backplate/screws/labels, so it stays legible at small icon size.
+// (px,py) is the glyph's top-left anchor, targetH its total height — same call signature every
+// caller already uses. The traced reference-SVG lever (HANDLE_PATHS/HANDLE_BBOX above) turned out
+// unrecognizable at the small size these render at in practice (a thin squiggle), so this draws a
+// plain capsule lever + a hollow pivot/escutcheon circle instead — the same symbol used on real
+// window hardware schedules, legible even a few px tall. "outside" flips which end the pivot sits
+// on (top vs bottom), since the handle mounts on the opposite sash edge in each view.
 function handleGlyphSVG(px,py,targetH,outside){
-  const side=outside?'outside':'inside';
-  const bb=HANDLE_BBOX[side];
-  const s=targetH/bb.h;
-  const tx=px-bb.minX*s, ty=py-bb.minY*s;
-  const d=HANDLE_PATHS[side];
-  return `<g transform="translate(${tx.toFixed(2)},${ty.toFixed(2)}) scale(${s.toFixed(4)})" fill="none" stroke="#222" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none">
-    <path d="${d[0]}"/><path d="${d[1]}"/>
+  const h=targetH, w=Math.max(1.4,h*0.26), r=w/2;
+  const cx=px;
+  const pivotY = outside? py+r*1.3 : py+h-r*1.3;
+  const bodyY0 = outside? py+r*2.4 : py;
+  const bodyY1 = outside? py+h : py+h-r*2.4;
+  return `<g pointer-events="none">
+    <line x1="${cx.toFixed(2)}" y1="${bodyY0.toFixed(2)}" x2="${cx.toFixed(2)}" y2="${bodyY1.toFixed(2)}" stroke="#222" stroke-width="${w.toFixed(2)}" stroke-linecap="round"/>
+    <circle cx="${cx.toFixed(2)}" cy="${pivotY.toFixed(2)}" r="${(r*0.95).toFixed(2)}" fill="#fff" stroke="#222" stroke-width="1"/>
   </g>`;
 }
 function cellFillColor(open){ return open?'#5ce1e6':'#eaf4ff'; }
@@ -7316,6 +7314,21 @@ function cellFillColor(open){ return open?'#5ce1e6':'#eaf4ff'; }
 // hinge is drawn on, same convention the pre-existing code used.
 // outsideView: cat.viewFromOutside — swaps in the mirrored handle glyph and is also used by the
 // caller to switch the "Viewed from Inside/Outside" caption.
+// Parallel "//" glazing hatch for a genuinely fixed (non-operable) pane — replaces the old full
+// corner-to-corner X, which read as clutter rather than a glass indicator at small render size.
+function glassHatchSVG(ix,iy,icw,ich){
+  const n=4, step=(icw+ich)/(n+1);
+  let g='';
+  for(let i=1;i<=n;i++){
+    const off=step*i;
+    // Diagonal at a consistent 45°-ish angle, clipped to the cell rect: walk a line of that
+    // offset from the top edge (or left edge once off exceeds icw) down to the bottom/right edge.
+    const x1=Math.max(ix,ix+off-ich), y1=Math.min(iy+ich,iy+off);
+    const x2=Math.min(ix+icw,ix+off), y2=Math.max(iy,iy+off-icw);
+    g+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#99aabb" stroke-width="0.6" pointer-events="none"/>`;
+  }
+  return g;
+}
 function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
   const cx=ix+icw/2, cy=iy+ich/2;
   const isSliding=(wtype==='sliding'||wtype==='sliding+fixed');
@@ -7325,7 +7338,7 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
       const size=Math.min(icw,ich)*0.5;
       return `<g transform="translate(${(cx-size/2).toFixed(2)},${(cy-size/2).toFixed(2)}) scale(${(size/69.75).toFixed(4)})" pointer-events="none"><path d="M 69.164062 13.066406 L 56.09375 0 L 34.582031 21.507812 L 13.066406 0 L 0 13.066406 L 21.511719 34.582031 L 0 56.09375 L 13.066406 69.164062 L 34.582031 47.648438 L 56.09375 69.164062 L 69.164062 56.09375 L 47.648438 34.582031 Z M 69.164062 13.066406 " fill="#99aabb" fill-opacity="0.85"/></g>`;
     }
-    return `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6" pointer-events="none"/><line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#99aabb" stroke-width="0.6" pointer-events="none"/>`;
+    return glassHatchSVG(ix,iy,icw,ich);
   }
   let g='';
   if(isSliding){
@@ -7334,20 +7347,21 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
     g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.4, !!outsideView);
   } else if(wtype.indexOf('awning')===0){
     const az=Math.min(icw,ich)*0.18;
-    g+=`<line x1="${ix}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
-      <line x1="${ix+icw}" y1="${iy}" x2="${cx}" y2="${iy+ich}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
-      <line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1" pointer-events="none"/>
+    // The arrow alone already shows the swing direction; the old wedge lines converging from the
+    // top corners to the hinge point were redundant "glass texture" that read as clutter.
+    g+=`<line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1" pointer-events="none"/>
       <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222" pointer-events="none"/>`;
     g+=handleGlyphSVG(ix+icw*0.08, iy+ich*0.1, Math.min(icw,ich)*0.35, !!outsideView);
   } else {
     const hingeLeft=(ci%2===0);
     const az=Math.min(icw,ich)*0.18;
     g+= hingeLeft
-      ? `<line x1="${ix}" y1="${iy}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/><line x1="${ix}" y1="${iy+ich}" x2="${ix+icw}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
-         <line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222" pointer-events="none"/>`
-      : `<line x1="${ix+icw}" y1="${iy}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/><line x1="${ix+icw}" y1="${iy+ich}" x2="${ix}" y2="${cy}" stroke="#99a" stroke-width="0.6" pointer-events="none"/>
-         <line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222" pointer-events="none"/>`;
-    g+=handleGlyphSVG(hingeLeft? ix+icw*0.72 : ix+icw*0.08, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
+      ? `<line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222" pointer-events="none"/>`
+      : `<line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222" pointer-events="none"/>`;
+    // Mirror of the hinge-left position (icw*0.72) — keeps clear of the arrowhead, which sits
+    // right at the free edge (x≈2) on this side; the capsule handle is wide enough that the old
+    // 0.08 placement (tuned for the earlier, thinner glyph) sat on top of and hid the arrowhead.
+    g+=handleGlyphSVG(hingeLeft? ix+icw*0.72 : ix+icw*0.28, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
   }
   return g;
 }
