@@ -7289,15 +7289,12 @@ function handleOpeningFileUpload(input){
 // Shared glyph/fill helpers used by every elevation render branch (columns/rows/default-grid/
 // grid-merge). Centralizing this avoids the four render branches drifting out of sync visually.
 // (px,py) is the glyph's top-left anchor, targetH its total height — same call signature every
-// caller already uses. The traced reference-SVG lever (HANDLE_PATHS/HANDLE_BBOX above) turned out
-// unrecognizable at the small size these render at in practice (a thin squiggle), so this draws a
-// plain capsule lever + a hollow pivot/escutcheon circle instead — the same symbol used on real
-// window hardware schedules, legible even a few px tall. "outside" flips which end the pivot sits
-// on (top vs bottom), since the handle mounts on the opposite sash edge in each view.
-// Lever handle + escutcheon plate, matching the real hardware shape the user supplied as a
-// reference: a rounded mounting plate with the lever's domed top tucked into its lower half, the
-// lever body extending out as a long rounded bar. "outside" flips which end the plate sits on (top
-// vs bottom), since the handle mounts on the opposite sash edge in each view.
+// caller already uses. Lever handle + escutcheon plate, matching the real hardware shape the user
+// supplied as a reference: a rounded mounting plate with the lever's domed top tucked into its
+// lower half, the lever body extending out as a long rounded bar. "outside" flips which end the
+// plate sits on (top vs bottom), since the handle mounts on the opposite sash edge in each view.
+// The whole glyph is rotated 180° about its own center per the user's request (the lever+plate
+// read better pointing the other way at this scale).
 function handleGlyphSVG(px,py,targetH,outside){
   const h=targetH;
   const plateW=Math.max(2.2,h*0.42), plateH=h*0.46, plateRx=plateW*0.22;
@@ -7307,7 +7304,7 @@ function handleGlyphSVG(px,py,targetH,outside){
   const overlap = plateH*0.52;
   const leverY0 = outside? py+overlap : py;
   const leverY1 = outside? py+h : py+h-overlap;
-  return `<g pointer-events="none">
+  return `<g pointer-events="none" transform="rotate(180 ${cx.toFixed(2)} ${(py+h/2).toFixed(2)})">
     <rect x="${(cx-leverW/2).toFixed(2)}" y="${leverY0.toFixed(2)}" width="${leverW.toFixed(2)}" height="${(leverY1-leverY0).toFixed(2)}" rx="${leverRx.toFixed(2)}" fill="#222"/>
     <rect x="${(cx-plateW/2).toFixed(2)}" y="${plateY0.toFixed(2)}" width="${plateW.toFixed(2)}" height="${plateH.toFixed(2)}" rx="${plateRx.toFixed(2)}" fill="none" stroke="#222" stroke-width="1"/>
   </g>`;
@@ -7333,7 +7330,8 @@ function glassHatchSVG(ix,iy,icw,ich){
   }
   return g;
 }
-function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
+function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
+  if(showHandle===undefined) showHandle=true;
   const cx=ix+icw/2, cy=iy+ich/2;
   const isSliding=(wtype==='sliding'||wtype==='sliding+fixed');
   const isFixedCell=(!open||wtype==='fixed');
@@ -7348,7 +7346,9 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
   if(isSliding){
     const aw=Math.min(icw,ich)*0.34, ah=aw*(69.749998/60.75);
     g+=`<g transform="translate(${(cx-aw/2).toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${(aw/60.75).toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
-    g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.4, !!outsideView);
+    // Handle count follows the window's own handleQty (same field the quotation's hardware line
+    // uses), not one-per-panel — see slidingHandleColumns in dsGeometry's caller.
+    if(showHandle) g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.22, !!outsideView);
   } else if(wtype.indexOf('awning')===0){
     // Pivot at the hinge edge's midpoint (top-center for awning), fanning out to the two opposite
     // (bottom) corners — the standard architectural "swing from the hinge" symbol: a single fixed
@@ -7356,7 +7356,7 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
     g+=`<line x1="${cx}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>
       <line x1="${cx}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
     // Centered horizontally, sitting near the bottom edge — clear of both fan-line corner endpoints.
-    g+=handleGlyphSVG(cx, iy+ich-Math.min(icw,ich)*0.42, Math.min(icw,ich)*0.4, !!outsideView);
+    g+=handleGlyphSVG(cx, iy+ich-Math.min(icw,ich)*0.24, Math.min(icw,ich)*0.22, !!outsideView);
   } else {
     const hingeLeft=(ci%2===0);
     // Pivot at the hinge edge's midpoint (left-mid or right-mid), fanning out to the two opposite
@@ -7365,8 +7365,9 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
       ? `<line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`
       : `<line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
     // Handle sits on the edge opposite the hinge, at mid-height, close to the edge (the fan lines
-    // converge at the corners now, not along this edge, so there's no overlap to avoid here).
-    g+=handleGlyphSVG(hingeLeft? ix+icw*0.88 : ix+icw*0.12, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
+    // converge at the corners now, not along this edge, so there's no overlap to avoid here). Sized
+    // down (0.22x, was 0.4x) and offset to stay vertically centered on cy at the smaller size.
+    g+=handleGlyphSVG(hingeLeft? ix+icw*0.88 : ix+icw*0.12, cy-Math.min(icw,ich)*0.11, Math.min(icw,ich)*0.22, !!outsideView);
   }
   return g;
 }
@@ -7584,7 +7585,28 @@ function dsGeometry(w){
     for(let r=0;r<nRows;r++){ const row=[]; for(let c=0;c<nCols;c++){ row.push(seen<openCount); seen++; } openableGrid.push(row); }
   }
 
-  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows,grid,outsideView,openingData};
+  // Handle hardware count: the same field the quotation's own hardware/BOM line already uses
+  // (w.handleQty, populated from the catalogue code's own handleQty when the item was added) — e.g.
+  // a 2-track slider is typically 1 handle, a 3-track 2 handles, and so on, already encoded per
+  // code. The Design Summary drawing should show exactly that many handles, not one per panel.
+  const handleQty=(w.handleQty===0||w.handleQty==='0')?0:(num(w.handleQty)||(cat&&cat.handleQty!=null?num(cat.handleQty):1));
+  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows,grid,outsideView,openingData,handleQty};
+}
+// Which sliding-column indices (0-based, left to right) get a handle glyph when only `handleQty`
+// of the `nCols` panels actually carry hardware. Handles sit on the sashes nearest the center
+// meeting rail in a real slider, so pick columns closest to the horizontal center first, breaking
+// ties toward the left (lower index) for a deterministic, symmetric-looking result.
+function slidingHandleColumns(nCols,handleQty){
+  const set=new Set();
+  if(handleQty<=0||nCols<=0) return set;
+  if(handleQty>=nCols){ for(let i=0;i<nCols;i++) set.add(i); return set; }
+  const center=(nCols-1)/2;
+  const order=Array.from({length:nCols},(_,i)=>i).sort((a,b)=>{
+    const da=Math.abs(a-center), db=Math.abs(b-center);
+    return da!==db ? da-db : a-b;
+  });
+  order.slice(0,handleQty).forEach(i=>set.add(i));
+  return set;
 }
 function elevationSVG(geo,iW,iH){
   const {wtype,isSlidingLike,outsideView}=geo;
@@ -7671,6 +7693,9 @@ function elevationSVG(geo,iW,iH){
     if(colPx.length){ const last=colPx[colPx.length-1]; last.w=Math.max(1,last.w+(iW-acc)); } }
   const rowPx=[]; { let acc=0; rowsMm.forEach(mmv=>{ const ch=Math.max(1,Math.round(iH*mmv/rowTot)); rowPx.push({y0:acc,h:ch}); acc+=ch; });
     if(rowPx.length){ const last=rowPx[rowPx.length-1]; last.h=Math.max(1,last.h+(iH-acc)); } }
+  // For sliding windows, only `handleQty` of the panels actually get a handle glyph (matches the
+  // quotation's own hardware count) — pick the columns nearest the center meeting rail.
+  const slideHandleCols=geo.isSlidingLike ? slidingHandleColumns(colPx.length, geo.handleQty??1) : null;
   let cells='';
   for(let r=0;r<rowPx.length;r++){
     for(let c=0;c<colPx.length;c++){
@@ -7678,8 +7703,9 @@ function elevationSVG(geo,iW,iH){
       const open=(openableGrid[r]&&openableGrid[r][c])||false;
       const inset=1.5;
       const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
+      const showHandle=slideHandleCols ? slideHandleCols.has(c) : true;
       cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
-      cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,c,outsideView);
+      cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,c,outsideView,showHandle);
     }
   }
   let dividers='';
