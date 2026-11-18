@@ -6558,7 +6558,7 @@ function catDividerFormulaFracs(wMm,hMm,shMm,swMm,divRows){
     const plainWMm=plainCount>0?Math.max(1,(wMm-splitCount*swMm)/plainCount):0;
     const colsMm=order.map(isSplit=>isSplit?swMm:plainWMm);
     const sumW=colsMm.reduce((a,b)=>a+b,0)||1;
-    return {colFracs:colsMm.map(w=>w/sumW), rowFracs:[shMm/hMm, Math.max(0,hMm-shMm)/hMm]};
+    return {colFracs:colsMm.map(w=>w/sumW), rowFracs:[shMm/hMm, Math.max(0,hMm-shMm)/hMm], order:{axis:'col',seq:order}};
   }
   if(hFullQty>0 && vLocalQty>0 && shMm>0 && swMm>0){
     const nRows=hFullQty+1;
@@ -6569,7 +6569,7 @@ function catDividerFormulaFracs(wMm,hMm,shMm,swMm,divRows){
     const plainHMm=plainCount>0?Math.max(1,(hMm-splitCount*shMm)/plainCount):0;
     const rowsMm=order.map(isSplit=>isSplit?shMm:plainHMm);
     const sumH=rowsMm.reduce((a,b)=>a+b,0)||1;
-    return {rowFracs:rowsMm.map(h=>h/sumH), colFracs:[swMm/wMm, Math.max(0,wMm-swMm)/wMm]};
+    return {rowFracs:rowsMm.map(h=>h/sumH), colFracs:[swMm/wMm, Math.max(0,wMm-swMm)/wMm], order:{axis:'row',seq:order}};
   }
   return null;
 }
@@ -6577,6 +6577,32 @@ function fracsDiffer(a,b){
   if(!a||!b||a.length!==b.length) return !!(a||b);
   for(let i=0;i<a.length;i++) if(Math.abs(a[i]-b[i])>0.05) return true;
   return false;
+}
+/* The dynamic formula model (catDividerFormulaFracs) can only ever draw ONE shutter per "local
+   split" row/column — a single open cell paired with a single fixed cell. Some real catalogue
+   codes legitimately need two (or more) separate shutters side by side in the same row — e.g. a
+   2-handle code where the override grid has two independently-open cells in one row — which the
+   formula model has no way to represent at all, however its proportions are tuned. Comparing only
+   the aggregate colFracs/rowFracs against a grid shaped like that produces a false "mismatch": the
+   two will never agree on numbers, but that's not a proportion bug, it's a real capability gap, and
+   the grid is doing something necessary rather than something stale. This checks that the override
+   grid's actual per-row/per-column cell structure (not just its overall fracs) is even the kind of
+   shape the formula could produce — a sequence of plain full-span cells and single-open/single-
+   closed split pairs, with no cell merged across a predicted split boundary — before trusting a
+   fracs mismatch as something "untick to fix" can actually resolve. */
+function layoutStructurallyCompatible(grid,axis,order){
+  // axis: 'col' for vFullQty+hLocalQty (check per column), 'row' for hFullQty+vLocalQty (check per row)
+  const n=axis==='col'?grid.colFracs.length:grid.rowFracs.length;
+  if(n!==order.length) return false;
+  for(let i=0;i<n;i++){
+    const here=grid.cells.filter(c=>axis==='col' ? (c.c0===i&&c.c1===i+1) : (c.r0===i&&c.r1===i+1));
+    const spanning=grid.cells.filter(c=>axis==='col' ? (c.c0<=i&&c.c1>i+1) : (c.r0<=i&&c.r1>i+1));
+    if(spanning.length) return false; // a cell merged across this boundary — not a shape the formula can produce
+    const openCount=here.filter(c=>c.open).length;
+    if(order[i]){ if(!(here.length===2 && openCount===1)) return false; } // expected split: exactly one open + one closed
+    else { if(!(here.length===1 && openCount===0)) return false; } // expected plain: one closed cell spanning the whole row/col
+  }
+  return true;
 }
 function checkLayoutMismatch(){
   const el=document.getElementById('ncLayoutMismatchWarn'); if(!el) return;
@@ -6587,7 +6613,10 @@ function checkLayoutMismatch(){
   const dyn=catDividerFormulaFracs(vars.OW,vars.OH,vars.SH,vars.SW,divFilled);
   if(!dyn){ el.innerHTML=''; return; }
   const g=_gridDraft;
-  const mismatch=fracsDiffer(dyn.colFracs,g&&g.colFracs) || fracsDiffer(dyn.rowFracs,g&&g.rowFracs);
+  if(!g||!g.cells){ el.innerHTML=''; return; }
+  const axis=dyn.order.axis;
+  if(!layoutStructurallyCompatible(g,axis,dyn.order.seq)){ el.innerHTML=''; return; }
+  const mismatch=fracsDiffer(dyn.colFracs,g.colFracs) || fracsDiffer(dyn.rowFracs,g.rowFracs);
   el.innerHTML=mismatch
     ? `<div style="background:#fff3cd;border:1px solid #e0a800;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#664d03"><b>⚠ Layout mismatch:</b> your Divider Components (above) compute a different panel split than this custom grid for the test dimensions on the right (${vars.OW||'?'}×${vars.OH||'?'}, shutter ${vars.SW||'?'}×${vars.SH||'?'}). The custom grid uses fixed proportions and won't adjust per-instance — if this code's shutter size varies by quote, untick "Use custom layout" and let Divider Components draw it dynamically instead, or re-draw the grid to match.</div>`
     : '';
