@@ -8530,7 +8530,19 @@ async function cloudSaveRates(){
   if(!SB)return;
   try{
     const rCopy=JSON.parse(JSON.stringify(DB.rates||{}));
-    if(rCopy.catalogue) rCopy.catalogue=rCopy.catalogue.map(c=>{const e={...c};delete e.gif;delete e.img;return e;});
+    // Same rule as save()'s dbCopy stripping: only an old-format base64 "data:" image is large enough
+    // to need diverting away from this payload — a Supabase Storage URL is a short string and belongs
+    // here like any other field. This function used to strip gif/img unconditionally, which silently
+    // dropped every migrated image's URL from the cloud rates row on every save (the catalogue editor
+    // never shows an error for this — it's a background sync), even though save() itself already got
+    // this right. Found via a live post-migration check: the cloud _rates row had no img/gif keys at
+    // all for any catalogue code right after running the Storage migration script.
+    if(rCopy.catalogue) rCopy.catalogue=rCopy.catalogue.map(c=>{
+      const e={...c};
+      if((c.gif||'').indexOf('data:')===0) delete e.gif;
+      if((c.img||'').indexOf('data:')===0) delete e.img;
+      return e;
+    });
     const ts=Date.now();
     await SB.from('psg_settings').upsert({key:'_rates',value:JSON.stringify({ts,data:rCopy})});
     _ratesCloudTs=ts; // remember what WE pushed so we don't re-pull our own change
