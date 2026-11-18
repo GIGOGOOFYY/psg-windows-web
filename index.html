@@ -6397,7 +6397,7 @@ function layoutToggleEnabled(checked){
   const ed=document.getElementById('ncLayoutEditor');
   if(ed) ed.style.display=checked?'':'none';
   if(checked && (!_gridDraft||!_gridDraft.cells||!_gridDraft.cells.length)) _gridDraft=layoutGridDefault();
-  if(checked) renderLayoutCanvas();
+  if(checked) renderLayoutCanvas(); else checkLayoutMismatch();
 }
 
 function layoutEditorHTML(){
@@ -6411,6 +6411,7 @@ function layoutEditorHTML(){
       </label>
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:10px">Draw the real section layout for this code's Design Summary drawing directly — click a panel to toggle it Fixed/Shutter, drag any line to resize. This overrides Divider Qty/Direction and Divider Components above for the drawing only — pricing still uses those fields as normal.</div>
+    <div id="ncLayoutMismatchWarn"></div>
     <label style="font-size:11px;display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--line)">
       <input type="checkbox" id="ncViewOutside" ${_viewFromOutsideDraft?'checked':''}> Viewed from Outside <span class="muted" style="font-weight:400">(unchecked = Viewed from Inside, the default). Swaps the handle glyph to the mirrored outside view and changes the Design Summary caption.</span>
     </label>
@@ -6467,6 +6468,7 @@ function renderLayoutCanvas(){
   svg+=`<text x="${LAYOUT_CW/2}" y="${LAYOUT_CH+13}" font-size="9" text-anchor="middle" fill="#666">${nC} column${nC>1?'s':''} × ${nR} row${nR>1?'s':''} · ${g.cells.length} panel${g.cells.length>1?'s':''}</text>`;
   svg+=`</svg>`;
   wrap.innerHTML=svg;
+  checkLayoutMismatch();
 }
 
 function layoutStartDragBoundary(ev,i){
@@ -6529,6 +6531,66 @@ function catFormulaPreview(){
     parts.push(`${rowTxt} · <b>Total Divider = ${total.toFixed(0)}mm = ${(total/304.8).toFixed(2)} rft</b>`);
   }
   prev.innerHTML=parts.length?parts.join('<br>'):'<span class="muted">No formulas set — this window type prices normally.</span>';
+  checkLayoutMismatch();
+}
+/* Computes what the Design Summary's dynamic divider-formula engine (dsGeometry) would draw for a
+   representative instance, for the two patterns it recognizes as "instance-correct, not a fixed
+   fraction": a full-height vertical divider + a shutter-width-local horizontal one (splits one or
+   more columns into shutter-over-fixed), or the mirror image (full-width horizontal + shutter-
+   height-local vertical, splitting one or more rows). Kept intentionally independent of dsGeometry
+   itself (not a shared extraction) — this only needs to be close enough to flag a real mismatch for
+   the catalogue editor warning below, not byte-identical to the render path. Returns null when
+   neither pattern matches (plain dividerQty/dividerDir only) — nothing dynamic to compare against,
+   so a custom layout isn't inherently wrong there. */
+function catDividerFormulaFracs(wMm,hMm,shMm,swMm,divRows){
+  if(!(wMm>0)||!(hMm>0)) return null;
+  const normF=f=>String(f||'').replace(/\s+/g,'').toUpperCase();
+  const vFullQty=divRows.filter(r=>r.dir==='vertical'&&normF(r.formula)==='OH').reduce((a,r)=>a+(num(r.qty)||0),0);
+  const hLocalQty=divRows.filter(r=>r.dir==='horizontal'&&normF(r.formula)==='SW').reduce((a,r)=>a+(num(r.qty)||0),0);
+  const hFullQty=divRows.filter(r=>r.dir==='horizontal'&&normF(r.formula)==='OW').reduce((a,r)=>a+(num(r.qty)||0),0);
+  const vLocalQty=divRows.filter(r=>r.dir==='vertical'&&normF(r.formula)==='SH').reduce((a,r)=>a+(num(r.qty)||0),0);
+  if(vFullQty>0 && hLocalQty>0 && shMm>0 && swMm>0){
+    const nCols=vFullQty+1;
+    const splitCount=Math.max(0,Math.min(hLocalQty,nCols));
+    const plainCount=nCols-splitCount;
+    const splitLeft=Math.ceil(splitCount/2), splitRight=splitCount-splitLeft;
+    const order=[]; for(let i=0;i<splitLeft;i++)order.push(true); for(let i=0;i<plainCount;i++)order.push(false); for(let i=0;i<splitRight;i++)order.push(true);
+    const plainWMm=plainCount>0?Math.max(1,(wMm-splitCount*swMm)/plainCount):0;
+    const colsMm=order.map(isSplit=>isSplit?swMm:plainWMm);
+    const sumW=colsMm.reduce((a,b)=>a+b,0)||1;
+    return {colFracs:colsMm.map(w=>w/sumW), rowFracs:[shMm/hMm, Math.max(0,hMm-shMm)/hMm]};
+  }
+  if(hFullQty>0 && vLocalQty>0 && shMm>0 && swMm>0){
+    const nRows=hFullQty+1;
+    const splitCount=Math.max(0,Math.min(vLocalQty,nRows));
+    const plainCount=nRows-splitCount;
+    const splitTop=Math.ceil(splitCount/2), splitBottom=splitCount-splitTop;
+    const order=[]; for(let i=0;i<splitTop;i++)order.push(true); for(let i=0;i<plainCount;i++)order.push(false); for(let i=0;i<splitBottom;i++)order.push(true);
+    const plainHMm=plainCount>0?Math.max(1,(hMm-splitCount*shMm)/plainCount):0;
+    const rowsMm=order.map(isSplit=>isSplit?shMm:plainHMm);
+    const sumH=rowsMm.reduce((a,b)=>a+b,0)||1;
+    return {rowFracs:rowsMm.map(h=>h/sumH), colFracs:[swMm/wMm, Math.max(0,wMm-swMm)/wMm]};
+  }
+  return null;
+}
+function fracsDiffer(a,b){
+  if(!a||!b||a.length!==b.length) return !!(a||b);
+  for(let i=0;i<a.length;i++) if(Math.abs(a[i]-b[i])>0.05) return true;
+  return false;
+}
+function checkLayoutMismatch(){
+  const el=document.getElementById('ncLayoutMismatchWarn'); if(!el) return;
+  if(!_layoutEnabled){ el.innerHTML=''; return; }
+  const vars={OW:num(document.getElementById('ncTestOW').value),OH:num(document.getElementById('ncTestOH').value),
+    SH:num(document.getElementById('ncTestSH').value),SW:num(document.getElementById('ncTestSW').value)};
+  const divFilled=_catDivDraft.filter(r=>(r.formula||'').trim());
+  const dyn=catDividerFormulaFracs(vars.OW,vars.OH,vars.SH,vars.SW,divFilled);
+  if(!dyn){ el.innerHTML=''; return; }
+  const g=_gridDraft;
+  const mismatch=fracsDiffer(dyn.colFracs,g&&g.colFracs) || fracsDiffer(dyn.rowFracs,g&&g.rowFracs);
+  el.innerHTML=mismatch
+    ? `<div style="background:#fff3cd;border:1px solid #e0a800;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#664d03"><b>⚠ Layout mismatch:</b> your Divider Components (above) compute a different panel split than this custom grid for the test dimensions on the right (${vars.OW||'?'}×${vars.OH||'?'}, shutter ${vars.SW||'?'}×${vars.SH||'?'}). The custom grid uses fixed proportions and won't adjust per-instance — if this code's shutter size varies by quote, untick "Use custom layout" and let Divider Components draw it dynamically instead, or re-draw the grid to match.</div>`
+    : '';
 }
 function editCatalogueItem(code){ openAddCatalogueItem(code); }
 function deleteCatalogueItem(code){
