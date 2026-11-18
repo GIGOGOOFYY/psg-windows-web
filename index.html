@@ -4260,12 +4260,24 @@ function save(){
     if(!sl.includes('Latch Lock')) sl.push('Latch Lock');
   }
 
-  /* migrate any images still living in the DB object to their own separate keys, then strip */
+  /* Only the OLD inline-base64 image format ("data:...") gets diverted to the separate localStorage/
+     cloud-blob path and stripped before syncing — that's the large-payload case the separate path
+     exists to protect against. A Storage URL (http/https, from uploadCatFile) is a short string and
+     rides along in the catalogue entry through the normal cloudSaveRates() sync like any other field;
+     once every code has been re-uploaded through Storage this whole diversion is dead code, but it's
+     kept so any catalogue entry still holding an old base64 image doesn't bloat the rates payload. */
   const dbCopy=JSON.parse(JSON.stringify(DB));
   if(dbCopy.rates&&dbCopy.rates.catalogue){
     dbCopy.rates.catalogue=dbCopy.rates.catalogue.map(c=>{
-      if(c.gif||c.img) saveCatImages(c.code,c.gif||'',c.img||'');
-      const e={...c}; delete e.gif; delete e.img; return e;
+      const e={...c};
+      const gifIsData=(c.gif||'').indexOf('data:')===0;
+      const imgIsData=(c.img||'').indexOf('data:')===0;
+      if(gifIsData||imgIsData){
+        saveCatImages(c.code, gifIsData?c.gif:'', imgIsData?c.img:'');
+        if(gifIsData) delete e.gif;
+        if(imgIsData) delete e.img;
+      }
+      return e;
     });
   }
   try{ localStorage.setItem(LS_KEY,JSON.stringify(dbCopy)); }
@@ -6523,20 +6535,47 @@ function deleteCatalogueItem(code){
   if(!confirm('Remove "'+code+'" from catalogue?')) return;
   DB.rates.catalogue=DB.rates.catalogue.filter(c=>c.code!==code); save(); renderCatalogue(); toast('Removed from catalogue');
 }
-function previewCatImg(inp){
+/* Catalogue image/GIF uploads go to Supabase Storage (bucket "catalogue-images"), named by the
+   window's own code (e.g. PSG-H7M-67321-img.png) — a real file with a permanent URL, not base64
+   crammed into localStorage + a single cloud settings row. That old approach silently lost images:
+   localStorage can be cleared/quota-limited, and every catalogue code's images combined into one
+   JSON blob could exceed the row/request size and fail the upsert with only a console warning. The
+   Storage URL is tiny, so it rides along with the rest of the catalogue entry through the existing
+   cloudSaveRates()/cloudPullRates() sync — no separate image-sync machinery needed going forward.
+   Falls back to the old inline-base64 behavior only if Supabase isn't connected at all, so the
+   feature still works offline (just without cross-device sync for that image). */
+async function uploadCatFile(inp,kind,dataFieldId,previewId){
   if(!inp.files[0]) return;
-  const reader=new FileReader();
-  reader.onload=e=>{document.getElementById('ncImgData').value=e.target.result;
-    document.getElementById('ncImgPreview').innerHTML=`<img src="${e.target.result}" style="max-height:100px;border:1px solid var(--line)">`;};
-  reader.readAsDataURL(inp.files[0]);
+  const file=inp.files[0];
+  const dataEl=document.getElementById(dataFieldId), prevEl=document.getElementById(previewId);
+  if(!SB){
+    const reader=new FileReader();
+    reader.onload=e=>{dataEl.value=e.target.result;
+      prevEl.innerHTML=`<img src="${e.target.result}" style="max-height:100px;border:1px solid var(--line)">`;};
+    reader.readAsDataURL(file);
+    toast('No cloud connection — image saved on this device only');
+    return;
+  }
+  const codeEl=document.getElementById('ncCode');
+  const code=((codeEl&&codeEl.value)||'').trim().replace(/[^A-Za-z0-9_-]/g,'')||('tmp'+Date.now());
+  const ext=((file.name.split('.').pop()||'png').toLowerCase().replace(/[^a-z0-9]/g,''))||'png';
+  const path=`${code}-${kind}.${ext}`;
+  prevEl.innerHTML=`<span class="muted">Uploading…</span>`;
+  try{
+    const {error}=await SB.storage.from('catalogue-images').upload(path,file,{upsert:true,contentType:file.type||undefined,cacheControl:'3600'});
+    if(error) throw error;
+    const {data}=SB.storage.from('catalogue-images').getPublicUrl(path);
+    const url=data.publicUrl+'?v='+Date.now();
+    dataEl.value=url;
+    prevEl.innerHTML=`<img src="${url}" style="max-height:100px;border:1px solid var(--line)">`;
+  }catch(e){
+    console.warn('uploadCatFile',e);
+    toast('Image upload failed: '+(e&&e.message||e));
+    prevEl.innerHTML='';
+  }
 }
-function previewCatGif(inp){
-  if(!inp.files[0]) return;
-  const reader=new FileReader();
-  reader.onload=e=>{document.getElementById('ncGifData').value=e.target.result;
-    document.getElementById('ncGifPreview').innerHTML=`<img src="${e.target.result}" style="max-height:100px;border:1px solid var(--line)">`;};
-  reader.readAsDataURL(inp.files[0]);
-}
+function previewCatImg(inp){ uploadCatFile(inp,'img','ncImgData','ncImgPreview'); }
+function previewCatGif(inp){ uploadCatFile(inp,'gif','ncGifData','ncGifPreview'); }
 function saveCatalogueItem(editCode){
   const code=(document.getElementById('ncCode').value||'').trim();
   const cat=(document.getElementById('ncCat').value||'').trim();
@@ -6566,10 +6605,12 @@ function saveCatalogueItem(editCode){
   const viewFromOutside=viewFromOutsideEl?!!viewFromOutsideEl.checked:false;
   const openingData=_openingDraft||null;
   const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride,viewFromOutside,openingData};
-  /* images stored separately to avoid localStorage quota — keep in-memory only */
+  /* gif/img now hold a short Supabase Storage URL (set by uploadCatFile) in the normal case, so they
+     ride along in the catalogue entry like any other field — save()'s data:-URL check is what still
+     protects against bloat for any code not yet migrated off the old inline-base64 format. */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
-  saveCatImages(targetCode,gif,img);
+  if((gif||'').indexOf('data:')===0 || (img||'').indexOf('data:')===0) saveCatImages(targetCode,gif,img);
   if(editCode){
     const idx=DB.rates.catalogue.findIndex(c=>c.code===editCode);
     if(idx>=0) DB.rates.catalogue[idx]={...DB.rates.catalogue[idx],...entry};
