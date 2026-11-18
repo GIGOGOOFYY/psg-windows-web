@@ -7205,46 +7205,43 @@ function parseOpeningJSON(jsonText){
   const leaves=ordered.map(({x,...rest})=>rest);
   return {leaves};
 }
-// openingDiagramSVG(openingData, iW, iH): draws a compact row of "how it opens" icons, one per
-// leaf in openingData.leaves (see parseOpeningJSON for the shape). A hinged leaf (casement/awning)
-// draws a rectangle with a bold line on the hinge edge, a dashed swing line from the two non-hinge
-// corners converging toward the hinge side (the standard architectural "casement swing" symbol),
-// an arrowhead at that convergence point, a small handle dot on the edge opposite the hinge, and
-// an "OUT"/"IN" tag from openToward. A sliding leaf draws a horizontal arrow across the icon in
-// its slide direction. iW is a total budget the icons share evenly; iH is each icon's height.
+// openingLeafSVG(leaf, ix,iy,icw,ich): a compact "how it opens" icon for one leaf (see
+// parseOpeningJSON for the shape). A sliding leaf draws a horizontal arrow in its slide direction.
+// A hinged leaf (casement/awning) draws the minimal CAD-style pivot diagram: a single point at the
+// hinge side, "Internal" as a plain horizontal reference line, "External" as a shallow-angle line
+// showing the open position — just two rays from one pivot, labeled, no filled rectangle or glass
+// fill (matches the user's reference CAD export exactly). iW is a total budget the icons share
+// evenly; iH is each icon's height.
 function openingLeafSVG(leaf,ix,iy,icw,ich){
   const pad=3;
-  const x0=ix+pad, y0=iy+pad, x1=ix+icw-pad, y1=iy+ich-pad-9; // reserve 9px under the icon for the tag text
+  const x0=ix+pad, y0=iy+pad, x1=ix+icw-pad, y1=iy+ich-pad;
   const w=x1-x0, h=y1-y0;
-  let g=`<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#eaf4ff" stroke="#333" stroke-width="1"/>`;
   if(leaf.kind==='slide'){
     const cy=y0+h/2;
     const dir=leaf.slide==='left'?-1:1;
     const ax0=x0+w*0.2, ax1=x0+w*0.8;
     const tailX=dir>0?ax0:ax1, headX=dir>0?ax1:ax0;
-    g+=`<line x1="${tailX}" y1="${cy}" x2="${headX}" y2="${cy}" stroke="#222" stroke-width="1.3"/>`;
+    let g=`<line x1="${tailX}" y1="${cy}" x2="${headX}" y2="${cy}" stroke="#222" stroke-width="1.3"/>`;
     g+=`<polygon points="${headX},${cy} ${headX-dir*6},${cy-3} ${headX-dir*6},${cy+3}" fill="#222"/>`;
     g+=`<text x="${x0+w/2}" y="${y1+9}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">Slides ${leaf.slide}</text>`;
     return g;
   }
-  // Hinge edge: which side of the rectangle is the hinge on.
   const hinge=leaf.hinge==='up'?'top':(leaf.hinge==='left'?'left':'right');
-  const hingeLineW=2.2;
-  let hx1,hy1,hx2,hy2, oppCornerA,oppCornerB, hingeMid;
-  if(hinge==='top'){ hx1=x0;hy1=y0;hx2=x1;hy2=y0; oppCornerA={x:x0,y:y1}; oppCornerB={x:x1,y:y1}; hingeMid={x:(x0+x1)/2,y:y0}; }
-  else if(hinge==='left'){ hx1=x0;hy1=y0;hx2=x0;hy2=y1; oppCornerA={x:x1,y:y0}; oppCornerB={x:x1,y:y1}; hingeMid={x:x0,y:(y0+y1)/2}; }
-  else { hx1=x1;hy1=y0;hx2=x1;hy2=y1; oppCornerA={x:x0,y:y0}; oppCornerB={x:x0,y:y1}; hingeMid={x:x1,y:(y0+y1)/2}; }
-  g+=`<line x1="${hx1}" y1="${hy1}" x2="${hx2}" y2="${hy2}" stroke="#222" stroke-width="${hingeLineW}"/>`;
-  // Swing lines: from each of the two non-hinge corners, converging on the hinge edge's midpoint —
-  // the universal "which way does it swing" symbol, independent of in/out (that's a depth concept
-  // an elevation view can't show directly, so it's called out separately via the OUT/IN tag below).
-  g+=`<line x1="${oppCornerA.x}" y1="${oppCornerA.y}" x2="${hingeMid.x}" y2="${hingeMid.y}" stroke="#777" stroke-width="0.8" stroke-dasharray="3,2"/>`;
-  g+=`<line x1="${oppCornerB.x}" y1="${oppCornerB.y}" x2="${hingeMid.x}" y2="${hingeMid.y}" stroke="#777" stroke-width="0.8" stroke-dasharray="3,2"/>`;
-  // Handle dot on the edge opposite the hinge, at mid-height/width.
-  const handlePt = hinge==='left' ? {x:x1,y:(y0+y1)/2} : hinge==='right' ? {x:x0,y:(y0+y1)/2} : {x:(x0+x1)/2,y:y1};
-  g+=`<circle cx="${handlePt.x}" cy="${handlePt.y}" r="2" fill="#222"/>`;
-  const tag=(leaf.toward==='outward'?'Opens Out':'Opens In')+' · '+hinge+' hinge';
-  g+=`<text x="${x0+w/2}" y="${y1+9}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">${tag}</text>`;
+  const mirror=(hinge==='right'); // pivot on the right, rays sweep left
+  const px = mirror? x1 : x0;
+  const dir = mirror? -1 : 1;
+  const py = y0+h*0.62; // a bit below center, so the External ray + labels above it have headroom
+  const baseEndX = mirror? x0 : x1, baseEndY = py; // "Internal": plain horizontal reference line
+  const openEndX = px+dir*w*0.82, openEndY = y0; // "External": shallow-angle open position
+  let g=`<line x1="${px}" y1="${py}" x2="${baseEndX}" y2="${baseEndY}" stroke="#222" stroke-width="0.9"/>`;
+  g+=`<line x1="${baseEndX}" y1="${(baseEndY-3.5).toFixed(1)}" x2="${baseEndX}" y2="${(baseEndY+3.5).toFixed(1)}" stroke="#222" stroke-width="0.9"/>`; // end tick, like a dimension-line cap
+  g+=`<line x1="${px}" y1="${py}" x2="${openEndX.toFixed(1)}" y2="${openEndY.toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+  const sq=1.6;
+  g+=`<rect x="${(openEndX-sq).toFixed(1)}" y="${(openEndY-sq).toFixed(1)}" width="${(sq*2).toFixed(1)}" height="${(sq*2).toFixed(1)}" fill="none" stroke="#222" stroke-width="0.8"/>`;
+  g+=`<rect x="${(px-sq).toFixed(1)}" y="${(py-sq).toFixed(1)}" width="${(sq*2).toFixed(1)}" height="${(sq*2).toFixed(1)}" fill="none" stroke="#222" stroke-width="0.8"/>`;
+  const lx=(px+dir*2).toFixed(1), anchor=mirror?'end':'start';
+  g+=`<text x="${lx}" y="${(py-6).toFixed(1)}" text-anchor="${anchor}" font-family="Arial" font-size="7" fill="#444">External</text>`;
+  g+=`<text x="${lx}" y="${(py+9).toFixed(1)}" text-anchor="${anchor}" font-family="Arial" font-size="7" fill="#444">Internal</text>`;
   return g;
 }
 function openingDiagramSVG(openingData,iW,iH){
@@ -7297,15 +7294,22 @@ function handleOpeningFileUpload(input){
 // plain capsule lever + a hollow pivot/escutcheon circle instead — the same symbol used on real
 // window hardware schedules, legible even a few px tall. "outside" flips which end the pivot sits
 // on (top vs bottom), since the handle mounts on the opposite sash edge in each view.
+// Lever handle + escutcheon plate, matching the real hardware shape the user supplied as a
+// reference: a rounded mounting plate with the lever's domed top tucked into its lower half, the
+// lever body extending out as a long rounded bar. "outside" flips which end the plate sits on (top
+// vs bottom), since the handle mounts on the opposite sash edge in each view.
 function handleGlyphSVG(px,py,targetH,outside){
-  const h=targetH, w=Math.max(1.4,h*0.26), r=w/2;
+  const h=targetH;
+  const plateW=Math.max(2.2,h*0.42), plateH=h*0.46, plateRx=plateW*0.22;
+  const leverW=plateW*0.58, leverRx=leverW/2;
   const cx=px;
-  const pivotY = outside? py+r*1.3 : py+h-r*1.3;
-  const bodyY0 = outside? py+r*2.4 : py;
-  const bodyY1 = outside? py+h : py+h-r*2.4;
+  const plateY0 = outside? py : py+h-plateH;
+  const overlap = plateH*0.52;
+  const leverY0 = outside? py+overlap : py;
+  const leverY1 = outside? py+h : py+h-overlap;
   return `<g pointer-events="none">
-    <line x1="${cx.toFixed(2)}" y1="${bodyY0.toFixed(2)}" x2="${cx.toFixed(2)}" y2="${bodyY1.toFixed(2)}" stroke="#222" stroke-width="${w.toFixed(2)}" stroke-linecap="round"/>
-    <circle cx="${cx.toFixed(2)}" cy="${pivotY.toFixed(2)}" r="${(r*0.95).toFixed(2)}" fill="#fff" stroke="#222" stroke-width="1"/>
+    <rect x="${(cx-leverW/2).toFixed(2)}" y="${leverY0.toFixed(2)}" width="${leverW.toFixed(2)}" height="${(leverY1-leverY0).toFixed(2)}" rx="${leverRx.toFixed(2)}" fill="#222"/>
+    <rect x="${(cx-plateW/2).toFixed(2)}" y="${plateY0.toFixed(2)}" width="${plateW.toFixed(2)}" height="${plateH.toFixed(2)}" rx="${plateRx.toFixed(2)}" fill="none" stroke="#222" stroke-width="1"/>
   </g>`;
 }
 function cellFillColor(open){ return open?'#5ce1e6':'#eaf4ff'; }
@@ -7346,22 +7350,23 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView){
     g+=`<g transform="translate(${(cx-aw/2).toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${(aw/60.75).toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
     g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.4, !!outsideView);
   } else if(wtype.indexOf('awning')===0){
-    const az=Math.min(icw,ich)*0.18;
-    // The arrow alone already shows the swing direction; the old wedge lines converging from the
-    // top corners to the hinge point were redundant "glass texture" that read as clutter.
-    g+=`<line x1="${cx}" y1="${cy-az}" x2="${cx}" y2="${iy+ich-2}" stroke="#222" stroke-width="1.1" pointer-events="none"/>
-      <polygon points="${cx},${iy+ich-2} ${cx-3},${iy+ich-6} ${cx+3},${iy+ich-6}" fill="#222" pointer-events="none"/>`;
-    g+=handleGlyphSVG(ix+icw*0.08, iy+ich*0.1, Math.min(icw,ich)*0.35, !!outsideView);
+    // Pivot at the hinge edge's midpoint (top-center for awning), fanning out to the two opposite
+    // (bottom) corners — the standard architectural "swing from the hinge" symbol: a single fixed
+    // point with two straight rays tracing the sash's extreme positions. Matches the real CAD export.
+    g+=`<line x1="${cx}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>
+      <line x1="${cx}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
+    // Centered horizontally, sitting near the bottom edge — clear of both fan-line corner endpoints.
+    g+=handleGlyphSVG(cx, iy+ich-Math.min(icw,ich)*0.42, Math.min(icw,ich)*0.4, !!outsideView);
   } else {
     const hingeLeft=(ci%2===0);
-    const az=Math.min(icw,ich)*0.18;
+    // Pivot at the hinge edge's midpoint (left-mid or right-mid), fanning out to the two opposite
+    // corners — same hinge-pivot swing symbol as the awning branch above.
     g+= hingeLeft
-      ? `<line x1="${cx+az}" y1="${cy}" x2="${ix+icw-2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+icw-2},${cy} ${ix+icw-6},${cy-3} ${ix+icw-6},${cy+3}" fill="#222" pointer-events="none"/>`
-      : `<line x1="${cx-az}" y1="${cy}" x2="${ix+2}" y2="${cy}" stroke="#222" stroke-width="1.1" pointer-events="none"/><polygon points="${ix+2},${cy} ${ix+6},${cy-3} ${ix+6},${cy+3}" fill="#222" pointer-events="none"/>`;
-    // Mirror of the hinge-left position (icw*0.72) — keeps clear of the arrowhead, which sits
-    // right at the free edge (x≈2) on this side; the capsule handle is wide enough that the old
-    // 0.08 placement (tuned for the earlier, thinner glyph) sat on top of and hid the arrowhead.
-    g+=handleGlyphSVG(hingeLeft? ix+icw*0.72 : ix+icw*0.28, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
+      ? `<line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`
+      : `<line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
+    // Handle sits on the edge opposite the hinge, at mid-height, close to the edge (the fan lines
+    // converge at the corners now, not along this edge, so there's no overlap to avoid here).
+    g+=handleGlyphSVG(hingeLeft? ix+icw*0.88 : ix+icw*0.12, cy-Math.min(icw,ich)*0.2, Math.min(icw,ich)*0.4, !!outsideView);
   }
   return g;
 }
