@@ -7343,12 +7343,20 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
     return glassHatchSVG(ix,iy,icw,ich);
   }
   let g='';
+  // Fixed absolute handle size (not a fraction of the cell) — previously scaled with
+  // Math.min(icw,ich), which differs across catalogue codes (single-panel vs 2-panel vs merged-
+  // grid cells all end up with different pixel dimensions within the Design Summary's fixed
+  // 90×115 image box), producing visibly different handle sizes item to item. A flat constant
+  // guarantees one consistent size everywhere; it only shrinks (never grows past HANDLE_H) for a
+  // cell too small to fit it.
+  const HANDLE_H=9.5;
+  const handleH=Math.min(HANDLE_H, Math.min(icw,ich)*0.9);
   if(isSliding){
     const aw=Math.min(icw,ich)*0.34, ah=aw*(69.749998/60.75);
     g+=`<g transform="translate(${(cx-aw/2).toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${(aw/60.75).toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
     // Handle count follows the window's own handleQty (same field the quotation's hardware line
     // uses), not one-per-panel — see slidingHandleColumns in dsGeometry's caller.
-    if(showHandle) g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, Math.min(icw,ich)*0.22, !!outsideView);
+    if(showHandle) g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, handleH, !!outsideView);
   } else if(wtype.indexOf('awning')===0){
     // Pivot at the hinge edge's midpoint (top-center for awning), fanning out to the two opposite
     // (bottom) corners — the standard architectural "swing from the hinge" symbol: a single fixed
@@ -7356,7 +7364,7 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
     g+=`<line x1="${cx}" y1="${iy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>
       <line x1="${cx}" y1="${iy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
     // Centered horizontally, sitting near the bottom edge — clear of both fan-line corner endpoints.
-    g+=handleGlyphSVG(cx, iy+ich-Math.min(icw,ich)*0.24, Math.min(icw,ich)*0.22, !!outsideView);
+    g+=handleGlyphSVG(cx, iy+ich-handleH*1.1, handleH, !!outsideView);
   } else {
     const hingeLeft=(ci%2===0);
     // Pivot at the hinge edge's midpoint (left-mid or right-mid), fanning out to the two opposite
@@ -7365,9 +7373,8 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
       ? `<line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix}" y1="${cy}" x2="${ix+icw}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`
       : `<line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy}" stroke="#222" stroke-width="1" pointer-events="none"/><line x1="${ix+icw}" y1="${cy}" x2="${ix}" y2="${iy+ich}" stroke="#222" stroke-width="1" pointer-events="none"/>`;
     // Handle sits on the edge opposite the hinge, at mid-height, close to the edge (the fan lines
-    // converge at the corners now, not along this edge, so there's no overlap to avoid here). Sized
-    // down (0.22x, was 0.4x) and offset to stay vertically centered on cy at the smaller size.
-    g+=handleGlyphSVG(hingeLeft? ix+icw*0.88 : ix+icw*0.12, cy-Math.min(icw,ich)*0.11, Math.min(icw,ich)*0.22, !!outsideView);
+    // converge at the corners now, not along this edge, so there's no overlap to avoid here).
+    g+=handleGlyphSVG(hingeLeft? ix+icw*0.88 : ix+icw*0.12, cy-handleH/2, handleH, !!outsideView);
   }
   return g;
 }
