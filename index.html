@@ -7359,6 +7359,28 @@ function openingLeafSVG(leaf,ix,iy,icw,ich){
     return g;
   }
   const hinge=leaf.hinge==='up'?'top':(leaf.hinge==='left'?'left':'right');
+  if(hinge==='top'){
+    // Awning (top-hinge) leaf: the sash tilts out evenly across its whole width rather than
+    // swinging from one side, so this is a symmetric trapezoid (matches the reference CAD export)
+    // instead of casement's single-pivot sweep below — "Internal" is the full-width closed
+    // position at the bottom, "External" a narrower, shorter line above it where the bottom edge
+    // projects to when open, joined by two angled legs.
+    const cx=x0+w/2;
+    const inY=y1, exY=y0+h*0.22, exHalf=w*0.25;
+    const exX0=cx-exHalf, exX1=cx+exHalf;
+    let g=`<line x1="${x0}" y1="${inY}" x2="${x1}" y2="${inY}" stroke="#222" stroke-width="0.9"/>`;
+    g+=`<line x1="${x0}" y1="${(inY-3.5).toFixed(1)}" x2="${x0}" y2="${(inY+3.5).toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+    g+=`<line x1="${x1}" y1="${(inY-3.5).toFixed(1)}" x2="${x1}" y2="${(inY+3.5).toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+    g+=`<line x1="${exX0.toFixed(1)}" y1="${exY.toFixed(1)}" x2="${exX1.toFixed(1)}" y2="${exY.toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+    g+=`<line x1="${x0}" y1="${inY}" x2="${exX0.toFixed(1)}" y2="${exY.toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+    g+=`<line x1="${x1}" y1="${inY}" x2="${exX1.toFixed(1)}" y2="${exY.toFixed(1)}" stroke="#222" stroke-width="0.9"/>`;
+    const sq=1.6;
+    g+=`<rect x="${(exX0-sq).toFixed(1)}" y="${(exY-sq).toFixed(1)}" width="${(sq*2).toFixed(1)}" height="${(sq*2).toFixed(1)}" fill="none" stroke="#222" stroke-width="0.8"/>`;
+    g+=`<rect x="${(exX1-sq).toFixed(1)}" y="${(exY-sq).toFixed(1)}" width="${(sq*2).toFixed(1)}" height="${(sq*2).toFixed(1)}" fill="none" stroke="#222" stroke-width="0.8"/>`;
+    g+=`<text x="${cx.toFixed(1)}" y="${(exY-4).toFixed(1)}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">External</text>`;
+    g+=`<text x="${cx.toFixed(1)}" y="${(inY+9).toFixed(1)}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">Internal</text>`;
+    return g;
+  }
   const mirror=(hinge==='right'); // pivot on the right, rays sweep left
   const px = mirror? x1 : x0;
   const dir = mirror? -1 : 1;
@@ -7462,7 +7484,7 @@ function glassHatchSVG(ix,iy,icw,ich){
   }
   return g;
 }
-function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
+function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle,nCols){
   if(showHandle===undefined) showHandle=true;
   const cx=ix+icw/2, cy=iy+ich/2;
   const isSliding=(wtype==='sliding'||wtype==='sliding+fixed');
@@ -7485,10 +7507,23 @@ function cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,showHandle){
   const handleH=Math.min(HANDLE_H, Math.min(icw,ich)*0.9);
   if(isSliding){
     const aw=Math.min(icw,ich)*0.34, ah=aw*(69.749998/60.75);
-    g+=`<g transform="translate(${(cx-aw/2).toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${(aw/60.75).toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
+    const s=aw/60.75;
+    // Direction is physical, not arbitrary: on a double-track slider every panel travels toward the
+    // center meeting rail (the only direction two overlapping tracks both support) — a panel left of
+    // center slides right, a panel right of center slides left, mirroring the arrow glyph about its
+    // own box so both point inward rather than both pointing the same way. nCols is the real column
+    // count at this call site; a single sliding cell (nCols<=1, e.g. called standalone) keeps the
+    // glyph's natural right-pointing orientation since there's no "other half" to point toward.
+    const center=((nCols||1)-1)/2;
+    const dir=(nCols>1 && ci>center) ? -1 : 1;
+    const tx=dir>=0 ? (cx-aw/2) : (cx+aw/2);
+    const sx=dir>=0 ? s : -s;
+    g+=`<g transform="translate(${tx.toFixed(2)},${(cy-ah/2).toFixed(2)}) scale(${sx.toFixed(4)},${s.toFixed(4)})" pointer-events="none"><path d="M 59.746094 34.757812 L 0.0078125 69.492188 L 17.285156 34.757812 L 0.0078125 0.0234375 Z M 59.746094 34.757812 " fill="#333"/></g>`;
     // Handle count follows the window's own handleQty (same field the quotation's hardware line
-    // uses), not one-per-panel — see slidingHandleColumns in dsGeometry's caller.
-    if(showHandle) g+=handleGlyphSVG(cx+aw*0.9, cy-ah*0.5, handleH, !!outsideView);
+    // uses), not one-per-panel — see slidingHandleColumns in dsGeometry's caller. Sits on the side
+    // of the panel nearer the meeting rail (same side the arrow tip points to), not always the right.
+    const hx=dir>=0 ? cx+aw*0.9 : cx-aw*0.9;
+    if(showHandle) g+=handleGlyphSVG(hx, cy-ah*0.5, handleH, !!outsideView);
   } else if(wtype.indexOf('awning')===0){
     // Pivot at the hinge edge's midpoint (top-center for awning), fanning out to the two opposite
     // (bottom) corners — the standard architectural "swing from the hinge" symbol: a single fixed
@@ -7763,7 +7798,7 @@ function elevationSVG(geo,iW,iH){
       const inset=1.5;
       const ix=x0+inset, iy=y0+inset, icw=Math.max(1,(x1-x0)-2*inset), ich=Math.max(1,(y1-y0)-2*inset);
       cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(cell.open)}" stroke="none"/>`;
-      cells+=cellGlyphMarkup(ix,iy,icw,ich,cell.open,wtype,cell.c0,outsideView);
+      cells+=cellGlyphMarkup(ix,iy,icw,ich,cell.open,wtype,cell.c0,outsideView,undefined,geo.grid.colFracs.length);
       cells+=`<rect x="${x0+0.5}" y="${y0+0.5}" width="${Math.max(1,(x1-x0)-1)}" height="${Math.max(1,(y1-y0)-1)}" fill="none" stroke="#222" stroke-width="2"/>`;
     });
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iW} ${iH}" width="${iW}" height="${iH}" style="display:block;overflow:visible;background:#f8f8f8">
@@ -7786,7 +7821,7 @@ function elevationSVG(geo,iW,iH){
         const inset=1.5;
         const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
         cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
-        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView);
+        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,undefined,colPx.length);
         if(ri<rowPx.length-1){ const y=y0+ch; dividers+=`<line x1="${x0}" y1="${y}" x2="${x0+cw}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
       });
       if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="0" x2="${x}" y2="${iH}" stroke="#222" stroke-width="2"/>`; }
@@ -7816,7 +7851,7 @@ function elevationSVG(geo,iW,iH){
         const inset=1.5;
         const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,rh-2*inset);
         cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
-        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView);
+        cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,ci,outsideView,undefined,colPx.length);
         if(ci<colPx.length-1){ const x=x0+cw; dividers+=`<line x1="${x}" y1="${y0}" x2="${x}" y2="${y0+rh}" stroke="#222" stroke-width="2"/>`; }
       });
       if(ri<rowPx.length-1){ const y=y0+rh; dividers+=`<line x1="0" y1="${y}" x2="${iW}" y2="${y}" stroke="#222" stroke-width="2"/>`; }
@@ -7844,7 +7879,7 @@ function elevationSVG(geo,iW,iH){
       const ix=x0+inset, iy=y0+inset, icw=Math.max(1,cw-2*inset), ich=Math.max(1,ch-2*inset);
       const showHandle=slideHandleCols ? slideHandleCols.has(c) : true;
       cells+=`<rect x="${ix}" y="${iy}" width="${icw}" height="${ich}" fill="${cellFillColor(open)}" stroke="none"/>`;
-      cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,c,outsideView,showHandle);
+      cells+=cellGlyphMarkup(ix,iy,icw,ich,open,wtype,c,outsideView,showHandle,colPx.length);
     }
   }
   let dividers='';
