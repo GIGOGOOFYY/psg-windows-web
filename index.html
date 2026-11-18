@@ -6064,6 +6064,7 @@ function openAddCatalogueItem(editCode){
   const autoCode=editCode?(existing?existing.code:''):genCatalogueCode();
   _layoutEnabled=!!(existing && existing.layoutOverride && existing.layoutOverride.enabled);
   _viewFromOutsideDraft=!!(existing && existing.viewFromOutside);
+  _openingDraft=(existing && existing.openingData) || null;
   _gridSelected=new Set();
   { const ov=existing&&existing.layoutOverride;
     if(ov && ov.grid && Array.isArray(ov.grid.cells) && ov.grid.cells.length){
@@ -6145,6 +6146,12 @@ function openAddCatalogueItem(editCode){
      </div>
 
      ${layoutEditorHTML()}
+
+     <div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:12px">
+       <label style="font-size:12px;font-weight:600">Opening Diagram Data <span style="font-weight:400;color:#888;text-transform:none">(.json export from the window-design CAD tool — adds a "how it opens" panel to the Design Summary)</span></label>
+       <input id="ncOpeningFile" type="file" accept=".json,application/json" style="margin-top:4px;display:block" onchange="handleOpeningFileUpload(this)">
+       <div id="ncOpeningPreview" style="margin-top:8px">${openingPreviewHTML(_openingDraft)}</div>
+     </div>
 
      <div><label style="font-size:12px;font-weight:600">Web Image / GIF <span style="font-weight:400;color:#888;text-transform:none">(animated GIF or PNG — shown in app)</span></label>
        <input id="ncGifFile" type="file" accept="image/*,.gif" style="margin-top:4px" onchange="previewCatGif(this)">
@@ -6557,7 +6564,8 @@ function saveCatalogueItem(editCode){
   const layoutOverride={enabled:_layoutEnabled,grid:{colFracs:g.colFracs.slice(),rowFracs:g.rowFracs.slice(),cells:g.cells.map(c=>({r0:c.r0,c0:c.c0,r1:c.r1,c1:c.c1,open:!!c.open}))}};
   const viewFromOutsideEl=document.getElementById('ncViewOutside');
   const viewFromOutside=viewFromOutsideEl?!!viewFromOutsideEl.checked:false;
-  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride,viewFromOutside};
+  const openingData=_openingDraft||null;
+  const entry={category:cat,wtype,handleQty:hq,shutterQty:sq,dividerQty:dq,dividerDir:ddir,outerFormula,shutterFormula,dividers,layoutOverride,viewFromOutside,openingData};
   /* images stored separately to avoid localStorage quota — keep in-memory only */
   entry.gif=gif; entry.img=img;
   const targetCode=editCode||code;
@@ -7128,6 +7136,159 @@ function addHandleAccGroup(){ const code=prompt('Enter handle code (e.g. MQ-02):
    row heights (mm), and which grid cells are openable, computed directly from the SAME fields the
    pricing engine. (See the continuation of this comment, re-opened below, just before dsGeometry
    itself — split only to make room for the shared glyph/color helpers, not a real break.) */
+// parseOpeningJSON(jsonText): takes the raw JSON exported from the window-design CAD tool (the
+// same files the user drops into the "Dxf" folder, one per catalogue code, sometimes with a
+// " net" variant) and extracts a small, storable summary of how the window opens: per frame (a
+// composite window can have 2+ frames side by side), its size/position and a list of its opening
+// units ("leaves") with hinge/slide side, swing direction and handle edge. This compact object
+// (typically a few hundred bytes, vs. 2-80KB for the raw export) is what gets stored on the
+// catalogue entry as cat.openingData and fed to openingDiagramSVG for rendering — we never keep
+// the raw CAD JSON around.
+//
+// Source schema notes (reverse-engineered from the user's real exports, not documented anywhere):
+// - Top level: {sm:[Frame,...]}. Each Frame has polygon.polygon[0] = 4 (or more, for an arched
+//   frame) segments forming its rectangle in the composite window's coordinate space (mm; y grows
+//   downward based on observed sign patterns), and its own sm:[] holding one "sash module":
+//     - {type:'Sash', hm:{openDirection, openToward, hingeType, handle:{edgeIndex}}} — a single
+//       hinged leaf (casement if openDirection is left/right, awning if 'up').
+//     - {type:'DoubleSash', sashes:[{hm:{...}}, {hm:{...}}]} — two independently-hinged leaves,
+//       each shaped like a single Sash's hm.
+//     - {type:'Slide', sashes:[{hm:{openDirection}, trackIndex, columnIndex, isFixed}, ...]} — a
+//       sliding module; only openDirection (slide side) is meaningful, no swing/handle data.
+// - A Frame with an empty sm:[] is plain fixed glass — nothing to draw for it.
+function frameBBox(frame){
+  const segs=frame.polygon.polygon[0];
+  const xs=[], ys=[];
+  for(const s of segs){
+    if(s.ps){ xs.push(s.ps.x); ys.push(s.ps.y); }
+    if(s.pe){ xs.push(s.pe.x); ys.push(s.pe.y); }
+    if(s.pc){ xs.push(s.pc.x); ys.push(s.pc.y); } // arc center, for arched frames — included so
+                                                     // the bbox still comfortably covers the arc
+  }
+  const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+  return {x:x0,y:y0,w:x1-x0,h:y1-y0};
+}
+function sashFromHm(hm){
+  if(!hm) return null;
+  return {kind:'hinge', hinge:hm.openDirection||'left', toward:hm.openToward||'outward'};
+}
+function parseOpeningJSON(jsonText){
+  let d;
+  try{ d=JSON.parse(jsonText); }catch(e){ return null; }
+  if(!d||!Array.isArray(d.sm)) return null;
+  // Flattened, not grouped by frame: some real exports stack frames vertically, nest a container
+  // frame around a door+sidelite combo, etc. — topology we can't reliably reconstruct from this
+  // data alone. What's always reliable per leaf is its own hinge/slide side and swing direction,
+  // so we keep frame w/h only as an aspect-ratio hint for drawing that one leaf's icon, and order
+  // leaves left-to-right by their frame's x position (correct for genuinely side-by-side
+  // composites, a harmless ordering guess otherwise — it never affects what any single icon shows).
+  const ordered=[];
+  for(const frame of d.sm){
+    if(frame.type!=='Frame') continue;
+    const bbox=frameBBox(frame);
+    for(const sm of (frame.sm||[])){
+      if(sm.type==='Sash'){
+        const s=sashFromHm(sm.hm); if(s) ordered.push({x:bbox.x,w:Math.round(bbox.w),h:Math.round(bbox.h),...s});
+      } else if(sm.type==='DoubleSash'){
+        for(const s of (sm.sashes||[])){ const x=sashFromHm(s.hm); if(x) ordered.push({x:bbox.x,w:Math.round(bbox.w),h:Math.round(bbox.h),...x}); }
+      } else if(sm.type==='Slide'){
+        for(const s of (sm.sashes||[])){
+          if(s.isFixed) continue;
+          ordered.push({x:bbox.x,w:Math.round(bbox.w),h:Math.round(bbox.h),kind:'slide',
+            slide:(s.hm&&s.hm.openDirection)||'left', track:typeof s.trackIndex==='number'?s.trackIndex:0});
+        }
+      }
+    }
+  }
+  if(!ordered.length) return null; // plain fixed window, or nothing this parser recognizes — draw nothing
+  ordered.sort((a,b)=>a.x-b.x);
+  const leaves=ordered.map(({x,...rest})=>rest);
+  return {leaves};
+}
+// openingDiagramSVG(openingData, iW, iH): draws a compact row of "how it opens" icons, one per
+// leaf in openingData.leaves (see parseOpeningJSON for the shape). A hinged leaf (casement/awning)
+// draws a rectangle with a bold line on the hinge edge, a dashed swing line from the two non-hinge
+// corners converging toward the hinge side (the standard architectural "casement swing" symbol),
+// an arrowhead at that convergence point, a small handle dot on the edge opposite the hinge, and
+// an "OUT"/"IN" tag from openToward. A sliding leaf draws a horizontal arrow across the icon in
+// its slide direction. iW is a total budget the icons share evenly; iH is each icon's height.
+function openingLeafSVG(leaf,ix,iy,icw,ich){
+  const pad=3;
+  const x0=ix+pad, y0=iy+pad, x1=ix+icw-pad, y1=iy+ich-pad-9; // reserve 9px under the icon for the tag text
+  const w=x1-x0, h=y1-y0;
+  let g=`<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#eaf4ff" stroke="#333" stroke-width="1"/>`;
+  if(leaf.kind==='slide'){
+    const cy=y0+h/2;
+    const dir=leaf.slide==='left'?-1:1;
+    const ax0=x0+w*0.2, ax1=x0+w*0.8;
+    const tailX=dir>0?ax0:ax1, headX=dir>0?ax1:ax0;
+    g+=`<line x1="${tailX}" y1="${cy}" x2="${headX}" y2="${cy}" stroke="#222" stroke-width="1.3"/>`;
+    g+=`<polygon points="${headX},${cy} ${headX-dir*6},${cy-3} ${headX-dir*6},${cy+3}" fill="#222"/>`;
+    g+=`<text x="${x0+w/2}" y="${y1+9}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">Slides ${leaf.slide}</text>`;
+    return g;
+  }
+  // Hinge edge: which side of the rectangle is the hinge on.
+  const hinge=leaf.hinge==='up'?'top':(leaf.hinge==='left'?'left':'right');
+  const hingeLineW=2.2;
+  let hx1,hy1,hx2,hy2, oppCornerA,oppCornerB, hingeMid;
+  if(hinge==='top'){ hx1=x0;hy1=y0;hx2=x1;hy2=y0; oppCornerA={x:x0,y:y1}; oppCornerB={x:x1,y:y1}; hingeMid={x:(x0+x1)/2,y:y0}; }
+  else if(hinge==='left'){ hx1=x0;hy1=y0;hx2=x0;hy2=y1; oppCornerA={x:x1,y:y0}; oppCornerB={x:x1,y:y1}; hingeMid={x:x0,y:(y0+y1)/2}; }
+  else { hx1=x1;hy1=y0;hx2=x1;hy2=y1; oppCornerA={x:x0,y:y0}; oppCornerB={x:x0,y:y1}; hingeMid={x:x1,y:(y0+y1)/2}; }
+  g+=`<line x1="${hx1}" y1="${hy1}" x2="${hx2}" y2="${hy2}" stroke="#222" stroke-width="${hingeLineW}"/>`;
+  // Swing lines: from each of the two non-hinge corners, converging on the hinge edge's midpoint —
+  // the universal "which way does it swing" symbol, independent of in/out (that's a depth concept
+  // an elevation view can't show directly, so it's called out separately via the OUT/IN tag below).
+  g+=`<line x1="${oppCornerA.x}" y1="${oppCornerA.y}" x2="${hingeMid.x}" y2="${hingeMid.y}" stroke="#777" stroke-width="0.8" stroke-dasharray="3,2"/>`;
+  g+=`<line x1="${oppCornerB.x}" y1="${oppCornerB.y}" x2="${hingeMid.x}" y2="${hingeMid.y}" stroke="#777" stroke-width="0.8" stroke-dasharray="3,2"/>`;
+  // Handle dot on the edge opposite the hinge, at mid-height/width.
+  const handlePt = hinge==='left' ? {x:x1,y:(y0+y1)/2} : hinge==='right' ? {x:x0,y:(y0+y1)/2} : {x:(x0+x1)/2,y:y1};
+  g+=`<circle cx="${handlePt.x}" cy="${handlePt.y}" r="2" fill="#222"/>`;
+  const tag=(leaf.toward==='outward'?'Opens Out':'Opens In')+' · '+hinge+' hinge';
+  g+=`<text x="${x0+w/2}" y="${y1+9}" text-anchor="middle" font-family="Arial" font-size="7" fill="#444">${tag}</text>`;
+  return g;
+}
+function openingDiagramSVG(openingData,iW,iH){
+  if(!openingData||!Array.isArray(openingData.leaves)||!openingData.leaves.length) return '';
+  const leaves=openingData.leaves;
+  // An explicit gap between icons (on top of each icon's own inner pad) — two mirrored "bowtie"
+  // swing symbols sitting edge-to-edge otherwise read, at a glance, as one connected shape instead
+  // of two separate ones (confirmed by eye while building this).
+  const gap=Math.min(6, iW/leaves.length*0.15);
+  const icw=(iW-gap*(leaves.length-1))/leaves.length;
+  let g='';
+  leaves.forEach((leaf,i)=>{ g+=openingLeafSVG(leaf, i*(icw+gap), 0, icw, iH); });
+  return `<svg width="${iW}" height="${iH}" style="display:block;overflow:visible" xmlns="http://www.w3.org/2000/svg">${g}</svg>`;
+}
+// --- Opening Diagram Data: catalogue editor glue (upload, preview, clear) -------------------
+// _openingDraft holds the parsed (not raw) opening summary for the code currently open in the
+// Edit Window Type modal — same pattern as _gridDraft/_layoutEnabled for the layout override.
+let _openingDraft=null;
+function openingPreviewHTML(data){
+  if(!data||!Array.isArray(data.leaves)||!data.leaves.length){
+    return `<div class="muted" style="font-size:11px">No opening data attached yet.</div>`;
+  }
+  const svg=openingDiagramSVG(data,280,55);
+  return `<div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px;display:inline-block">${svg}</div>
+    <div class="muted" style="font-size:11px;margin-top:4px">${data.leaves.length} opening unit${data.leaves.length===1?'':'s'} parsed.
+      <button type="button" style="margin-left:6px;font-size:11px;color:#c00;background:none;border:none;cursor:pointer;padding:0" onclick="clearOpeningDraft()">✕ Remove</button></div>`;
+}
+function clearOpeningDraft(){
+  _openingDraft=null;
+  const prev=document.getElementById('ncOpeningPreview'); if(prev) prev.innerHTML=openingPreviewHTML(null);
+  const f=document.getElementById('ncOpeningFile'); if(f) f.value='';
+}
+function handleOpeningFileUpload(input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const parsed=parseOpeningJSON(e.target.result);
+    if(!parsed){ if(typeof toast==='function') toast('No recognizable opening data in that file'); input.value=''; return; }
+    _openingDraft=parsed;
+    const prev=document.getElementById('ncOpeningPreview'); if(prev) prev.innerHTML=openingPreviewHTML(_openingDraft);
+  };
+  reader.onerror=()=>{ if(typeof toast==='function') toast('Could not read that file'); };
+  reader.readAsText(file);
+}
 // Shared glyph/fill helpers used by every elevation render branch (columns/rows/default-grid/
 // grid-merge). Centralizing this avoids the four render branches drifting out of sync visually.
 const HANDLE_PATHS = {
@@ -7210,6 +7371,7 @@ function dsGeometry(w){
   // branch below ends up computing colsMm/rowsMm.
   const cat=(DB.rates.catalogue||[]).find(c=>c.code===w.code);
   const outsideView=!!(cat&&cat.viewFromOutside);
+  const openingData=(cat&&cat.openingData)||null;
 
   // ---- rows (mm) ----
   const rawSec=(w.sectionHeights||'').split(',').map(s=>s.trim()).filter(s=>s&&!isNaN(s)).map(Number);
@@ -7403,7 +7565,7 @@ function dsGeometry(w){
     for(let r=0;r<nRows;r++){ const row=[]; for(let c=0;c<nCols;c++){ row.push(seen<openCount); seen++; } openableGrid.push(row); }
   }
 
-  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows,grid,outsideView};
+  return {wMm,hMm,colsMm,rowsMm,colsTotalMm,rowsTotalMm,nCols,nRows,wtype,openableGrid,isSlidingLike,columns,rows,grid,outsideView,openingData};
 }
 function elevationSVG(geo,iW,iH){
   const {wtype,isSlidingLike,outsideView}=geo;
@@ -7880,6 +8042,7 @@ function doPrint(id,mode){
               ${w.glassOuterThk?`<div style="color:#000"><b>${esc(w.glassOuterThk)}/${esc(w.glassInnerThk||'')} IGU</b></div>`:w.glassThk?`<div style="color:#000"><b>${esc(w.glazing||'Single')} ${esc(w.glassThk)}</b></div>`:''}
             </div>
           </div>
+          ${geo.openingData?`<div style="margin-top:4px;border-top:1px dashed #ccc;padding-top:3px;text-align:center">${openingDiagramSVG(geo.openingData,210,42)}</div>`:''}
         </td>`;
       }).join('')}</tr>`;
     }).join('')}
